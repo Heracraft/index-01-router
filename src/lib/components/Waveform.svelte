@@ -1,19 +1,20 @@
 <script lang="ts">
-	/* Bars of a recording, filled up to the play position. Click or drag to seek, arrows skip 5 s */
+	/* Bars of a recording, filled up to the play position. Click or drag to seek, arrows skip 5 s.
+	   One density everywhere: a 2px bar every 4px of width */
 	import { audio, barsFor } from './audio.svelte.ts';
 	import { formatDuration } from '#lib/format.ts';
 
 	interface Props {
 		id: string;
 		durationMs: number | null;
-		bars?: number;
 		class?: string;
 		/** Bar height range in px */
 		height?: number;
 	}
-	let { id, durationMs, bars = 72, class: cls = 'wave', height = 36 }: Props = $props();
+	let { id, durationMs, class: cls = 'wave', height = 36 }: Props = $props();
 
-	const heights = $derived(barsFor(id, bars));
+	let width = $state(0);
+	const heights = $derived(barsFor(id, Math.max(12, Math.min(160, Math.floor(width / 4)))));
 	const at = $derived(audio.progress(id, durationMs));
 	const total = $derived(audio.id === id && audio.duration ? audio.duration * 1000 : durationMs);
 
@@ -28,6 +29,7 @@
 
 <div
 	bind:this={el}
+	bind:clientWidth={width}
 	class={cls}
 	role="slider"
 	tabindex="0"

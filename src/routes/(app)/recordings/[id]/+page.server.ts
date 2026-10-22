@@ -4,7 +4,13 @@ import { db } from '#lib/server/db/index.ts';
 import { deliveries, integrations, recordings, webhookEvents } from '#lib/server/db/schema.ts';
 import { deleteRecording } from '#lib/server/ingest.ts';
 import { editTranscript, redeliver, retryRecording } from '#lib/server/pipeline.ts';
-import { entryRecs, notePathFor, obsidianLink, readNoteCached } from '#lib/server/journal.ts';
+import {
+	entryRecs,
+	loadRail,
+	notePathFor,
+	obsidianLink,
+	readNoteCached
+} from '#lib/server/journal.ts';
 import { entryRaw, parseNote, sectionOf } from '#lib/notes/sheet.ts';
 import { dayKey } from '#lib/format.ts';
 import {
@@ -21,7 +27,7 @@ import type { Actions, PageServerLoad } from './$types';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, url }) => {
 	if (!UUID.test(params.id)) error(404, 'Recording not found');
 	const [rec] = await db.select().from(recordings).where(eq(recordings.id, params.id));
 	if (!rec) error(404, 'Recording not found');
@@ -82,7 +88,10 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const timeZone = general.timezone || 'UTC';
 	const day = dayKey(rec.recordedAt, timeZone);
-	const [entry] = await entryRecs(eq(recordings.id, rec.id), 1);
+	const [[entry], rail] = await Promise.all([
+		entryRecs(eq(recordings.id, rec.id), 1),
+		loadRail(day, timeZone, url.searchParams.get('m'))
+	]);
 
 	// "In the note": the note each delivery writes to, read from Obsidian when it answers, with
 	// this recording's line marked, or where it would go when it is not there yet
@@ -142,8 +151,9 @@ export const load: PageServerLoad = async ({ params }) => {
 					if (at < 0) at = all.length;
 					all.splice(at, 0, own);
 				}
-				const from = Math.max(0, at - 2);
-				const to = Math.min(all.length, at + 3);
+				// The line with one neighbour each side
+				const from = Math.max(0, at - 1);
+				const to = Math.min(all.length, at + 2);
 				lines = all.slice(from, to);
 				before = from > 0;
 				after = to < all.length;
@@ -166,6 +176,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	const appTranscript = rec.appTranscript?.trim() || null;
 	return {
 		day,
+		rail,
 		entry: entry!,
 		contexts: contexts.filter((c) => c !== null),
 		recording: {

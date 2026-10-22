@@ -111,6 +111,11 @@ export const variables = defineEnvVars({
 		description: 'Bearer key of the Obsidian REST server at OBSIDIAN_MCP_URL',
 		schema: optional
 	},
+	OBSIDIAN_VAULT: {
+		description:
+			'Vault name for Open in Obsidian links. Set it when Obsidian has more than one vault',
+		schema: optional
+	},
 	FFMPEG_PATH: { description: 'ffmpeg binary', schema: (value) => value || 'ffmpeg' },
 	FFPROBE_PATH: { description: 'ffprobe binary', schema: (value) => value || 'ffprobe' },
 	TZ: {

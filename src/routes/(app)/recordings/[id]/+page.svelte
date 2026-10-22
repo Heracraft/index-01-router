@@ -6,6 +6,7 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import NotePreview from '#lib/components/NotePreview.svelte';
 	import Player from '#lib/components/Player.svelte';
+	import Rail from '#lib/components/Rail.svelte';
 	import { longDay, relativeDay } from '#lib/components/days.ts';
 	import { entryState } from '#lib/entry.ts';
 	import { describeRecording } from '#lib/recording-state.ts';
@@ -17,6 +18,7 @@
 		formatElapsed,
 		formatTime,
 		isPending,
+		languageName,
 		triggerLabel
 	} from '#lib/format.ts';
 	import type { PageProps } from './$types';
@@ -34,7 +36,7 @@
 	const hasTranscript = $derived(!!rec.transcript?.trim());
 	const failedDeliveries = $derived(data.deliveries.filter((d) => d.status === 'failed'));
 
-	// The day this recording sits in, as the back link and the title's muted part
+	// The day this recording sits in: the back link names it, the title is the time alone
 	const dayName = $derived(rel ?? longDay(data.day));
 	const relShort = $derived(
 		rel
@@ -46,8 +48,9 @@
 					timeZone: 'UTC'
 				})
 	);
+	const langs = $derived(rec.languages.map((l) => languageName(l)).join(', '));
 
-	// Problem block: one fact line and one action
+	// Problem block: the cause, one fact line and one action
 	const fact = $derived.by(() => {
 		if (st.kind !== 'failed') return '';
 		if (st.step === 'deliver') {
@@ -58,40 +61,6 @@
 		}
 		const tries = rec.attempts === 1 ? '1 try' : `${rec.attempts} tries`;
 		return `${tries}, last at ${formatTime(rec.updatedAt, tz)}`;
-	});
-	const fixLabel = $derived(
-		st.kind !== 'failed'
-			? ''
-			: st.fix.action === 'transcribe'
-				? 'Transcribe again'
-				: st.fix.action === 'delete'
-					? 'Delete recording'
-					: failedDeliveries.length === 1 && failedDeliveries[0]?.name
-						? `Send to ${failedDeliveries[0].name.toLowerCase()}`
-						: 'Send again'
-	);
-	// Pipeline track, shown only when something failed
-	const track = $derived.by(() => {
-		if (st.kind !== 'failed') return null;
-		const transcribeFailed = st.step === 'transcribe';
-		const d = failedDeliveries[0];
-		return [
-			{ label: 'Received', state: 'ok', at: formatTime(rec.receivedAt, tz) },
-			transcribeFailed
-				? { label: 'Transcribed', state: 'bad', at: `Failed ${formatTime(rec.updatedAt, tz)}` }
-				: {
-						label: 'Transcribed',
-						state: 'ok',
-						at: rec.transcribeMs != null ? `in ${formatElapsed(rec.transcribeMs)}` : 'Done'
-					},
-			transcribeFailed
-				? { label: 'Written', state: 'no', at: 'Not reached' }
-				: {
-						label: 'Written',
-						state: 'bad',
-						at: d ? `Failed ${formatTime(d.updatedAt, tz)}` : 'Failed'
-					}
-		];
 	});
 
 	const deleteLine = $derived.by(() => {
@@ -134,6 +103,29 @@
 			// cancelled
 		}
 	}
+	const sentLine = (d: (typeof data.deliveries)[number]) =>
+		[
+			d.status === 'sent'
+				? `Sent ${formatTime(d.updatedAt, tz)}`
+				: d.status === 'failed'
+					? 'Failed'
+					: d.status === 'pending'
+						? 'Sending'
+						: 'Skipped',
+			d.attempts > 1 ? `${d.attempts} tries` : ''
+		]
+			.filter(Boolean)
+			.join(' · ');
+	const engine = $derived(
+		rec.transcribedBy && rec.transcribedBy !== 'index-app'
+			? [
+					rec.transcribedBy.replace(/^[a-z-]+:/, ''),
+					rec.transcribeMs != null ? `in ${formatElapsed(rec.transcribeMs)}` : ''
+				]
+					.filter(Boolean)
+					.join(' ')
+			: ''
+	);
 	const liveLabel = $derived(
 		st.kind === 'waiting'
 			? 'Waiting'
@@ -149,7 +141,15 @@
 	<title>{formatTime(rec.recordedAt, tz)}, {relShort} · Index 01</title>
 </svelte:head>
 
-<div class="shell shell--one">
+<div class="shell">
+	<Rail
+		day={data.day}
+		today={data.rail.today}
+		calendar={data.rail.calendar}
+		needs={data.rail.needs}
+		{tz}
+		current={rec.id}
+	/>
 	<main id="main" class="col" tabindex="-1">
 		<a
 			class="back"
@@ -158,13 +158,11 @@
 				: resolve('/(app)/day/[date]', { date: data.day })}><Icon name="left" />{dayName}</a
 		>
 		<div class="rechead">
-			<h1 class="hk-h1-app">
-				{formatTime(rec.recordedAt, tz)}<span class="rel">, {relShort}</span>
-			</h1>
+			<h1 class="hk-h1-app">{formatTime(rec.recordedAt, tz)}</h1>
 			<p class="rec-m">
 				{#if rec.durationMs != null}<span>{formatDuration(rec.durationMs)}</span>{/if}
 				{#if rec.trigger !== 'single-click-hold'}<span>{triggerLabel(rec.trigger)}</span>{/if}
-				{#if rec.languages.length}<span>{rec.languages.join(' · ')}</span>{/if}
+				{#if langs}<span>{langs}</span>{/if}
 			</p>
 		</div>
 
@@ -173,40 +171,33 @@
 		{/if}
 
 		{#if st.kind === 'failed'}
-			<section class="problem" aria-label="Problem">
-				<p class="problem-c">{st.cause}</p>
-				{#if fact}<p class="problem-f">{fact}</p>{/if}
-				{#if track}
-					<ol class="track" aria-label="Steps">
-						{#each track as t (t.label)}
-							<li class={t.state}><b>{t.label}</b><span>{t.at}</span></li>
-						{/each}
-					</ol>
-				{/if}
-				{#if st.raw}<p class="fail-raw">{st.raw}</p>{/if}
-				<div class="problem-a">
-					{#if st.fix.action === 'delete'}
-						<ConfirmAction
-							action="?/delete"
-							label={fixLabel}
-							title="Delete the {formatTime(rec.recordedAt, tz)} recording"
-							triggerClass="hk-btn-danger"
-						>
-							<p>{deleteLine}</p>
-						</ConfirmAction>
-					{:else}
-						<form method="POST" action="?/{st.fix.action}" use:enhance={submit('fix')}>
-							{#if st.fix.delivery}<input
-									type="hidden"
-									name="delivery"
-									value={st.fix.delivery}
-								/>{/if}
-							<button class="hk-btn" disabled={!!pending} aria-busy={pending === 'fix'}>
-								{pending === 'fix' ? 'Working…' : fixLabel}
-							</button>
-						</form>
-					{/if}
+			<section class="issue" aria-label="Problem">
+				<span class="fdot" aria-hidden="true"></span>
+				<div class="issue-t">
+					<p class="issue-c">{st.cause}</p>
+					{#if fact}<p class="issue-f">{fact}</p>{/if}
 				</div>
+				{#if st.fix.action === 'delete'}
+					<ConfirmAction
+						action="?/delete"
+						label="Delete"
+						title="Delete the {formatTime(rec.recordedAt, tz)} recording"
+						triggerClass="hk-btn-secondary hk-btn-sm"
+					>
+						<p>{deleteLine}</p>
+					</ConfirmAction>
+				{:else}
+					<form method="POST" action="?/{st.fix.action}" use:enhance={submit('fix')}>
+						{#if st.fix.delivery}<input
+								type="hidden"
+								name="delivery"
+								value={st.fix.delivery}
+							/>{/if}
+						<button class="hk-btn hk-btn-sm" disabled={!!pending} aria-busy={pending === 'fix'}>
+							<Icon name="retry" size={14} />{pending === 'fix' ? 'Retrying…' : 'Retry'}
+						</button>
+					</form>
+				{/if}
 			</section>
 		{/if}
 
@@ -217,7 +208,7 @@
 		<section class="transcript" aria-label="Transcript">
 			{#if st.kind === 'waiting' || st.kind === 'transcribing' || st.kind === 'sending'}
 				<div class="e-s live" role="status">
-					<span class={st.kind === 'waiting' ? 'idle' : 'busy'} aria-hidden="true"></span>
+					<span class={st.kind === 'waiting' ? 'idle' : 'spin'} aria-hidden="true"></span>
 					{liveLabel}
 				</div>
 			{/if}
@@ -276,35 +267,31 @@
 		</section>
 
 		{#each hasTranscript ? data.contexts : [] as c (c.integrationId)}
-			<section class="sec" aria-label="In the note">
-				<div class="sec-hrow">
-					<h2 class="sec-h">{data.contexts.length > 1 ? c.name : 'In the note'}</h2>
-				</div>
-				{#if c.path}
-					<p class="statusline">
-						{#if c.sent}
-							<Icon name="check" class="ok-check" />In <span class="hk-mono">{c.path}</span>
-						{:else if busy}
-							<span class="busy" aria-hidden="true"></span>Not in
-							<span class="hk-mono">{c.path}</span> yet
-						{:else}
-							<span class="ring-warn" aria-hidden="true"></span>Not written to
-							<span class="hk-mono">{c.path}</span> yet
-						{/if}
-					</p>
-				{/if}
+			<section class="sec" aria-label={data.contexts.length > 1 ? c.name : 'In the note'}>
+				<h2 class="sec-h">{data.contexts.length > 1 ? c.name : 'In the note'}</h2>
 				<article class="sheet sheet--sm">
-					{#if c.path}
-						<div class="sheet-bar">
-							<span class="path">{c.path}</span>
-							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
-							{#if c.link}<a class="hk-link open" href={c.link}
-									>Open in Obsidian <Icon name="external" size={14} /></a
-								>{/if}
-						</div>
-					{/if}
+					<div class="sheet-bar">
+						<span class="path-s">
+							{#if c.sent}
+								<Icon name="check" size={14} class="ok-check" /><span class="hk-sr">Written to</span
+								>
+							{:else if busy}
+								<span class="spin" aria-hidden="true"></span><span class="hk-sr">Writing to</span>
+							{:else}
+								<span class="ring-warn" aria-hidden="true"></span><span class="hk-sr"
+									>Not written to</span
+								>
+							{/if}
+							<span class="path"
+								>{c.path ?? c.name}<span class="path-h">{` › ${c.heading}`}</span></span
+							>
+						</span>
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
+						{#if c.link}<a class="hk-link open" href={c.link}
+								>Open in Obsidian <Icon name="external" size={14} /></a
+							>{/if}
+					</div>
 					<div class="sheet-body">
-						<h3 class="nh">{c.heading}</h3>
 						<ul class="notes">
 							{#if c.before}<li class="ctx-gap" aria-hidden="true">…</li>{/if}
 							{#each c.lines as l, i (i)}
@@ -316,7 +303,7 @@
 								>
 									<span class="e-t">{l.time ?? ''}</span>
 									<div class="e-b">
-										<p class="e-x">
+										<p class="e-x" class:clamp2={!!l.mark}>
 											{#if l.task !== null}<span class="task" class:on={l.task}></span>{/if}{l.text}
 										</p>
 									</div>
@@ -395,12 +382,11 @@
 					<dt>Transcribed</dt>
 					<dd>
 						{#if rec.transcribedBy === 'index-app'}
-							Phone app{#if desc.fallbackReason}<span class="muted">
-									· {desc.fallbackReason}</span
+							Phone app{#if desc.fallbackReason}<span class="muted"
+									>{` · ${desc.fallbackReason}`}</span
 								>{/if}
 						{:else}
-							{rec.transcribedBy.replace(/^[a-z-]+:/, '')}{#if rec.transcribeMs != null}
-								in {formatElapsed(rec.transcribeMs)}{/if}
+							{engine}
 						{/if}
 					</dd>
 				{/if}
@@ -410,28 +396,23 @@
 				{/if}
 				{#each data.deliveries as d (d.id)}
 					<dt>{d.name}</dt>
-					<dd>
-						{d.status === 'sent'
-							? `Sent ${formatTime(d.updatedAt, tz)}`
-							: d.status === 'failed'
-								? 'Failed'
-								: d.status === 'pending'
-									? 'Sending'
-									: 'Skipped'}{d.attempts > 1
-							? ` · ${d.attempts} tries`
-							: ''}{#if d.status === 'sent'}
-							<span class="muted">
-								·
-								<form class="inline" method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
-									<input type="hidden" name="delivery" value={d.id} />
-									<button class="linkbtn" disabled={busy || !!pending}
-										>{pending === d.id ? 'Sending…' : 'Send again'}</button
-									>
-								</form></span
-							>{/if}
+					<dd class="dd-row">
+						<span>{sentLine(d)}</span>
+						{#if d.status === 'sent'}
+							<form class="inline" method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
+								<input type="hidden" name="delivery" value={d.id} />
+								<button class="linkbtn" disabled={busy || !!pending}
+									>{pending === d.id ? 'Sending…' : 'Send again'}</button
+								>
+							</form>
+						{/if}
 					</dd>
 				{/each}
-				{#if desc.other}
+				{#if st.kind === 'failed' && st.raw}
+					<dt>Error</dt>
+					<dd class="mono">{st.raw}</dd>
+				{/if}
+				{#if desc.other && st.kind !== 'failed'}
 					<dt>Error</dt>
 					<dd>{desc.other}</dd>
 				{/if}
@@ -505,13 +486,14 @@
 		font-size: 0.9375rem;
 		color: var(--hk-text-2);
 	}
-	.problem form {
-		display: block;
+	.issue form {
+		display: contents;
 	}
-	.problem-a :global(.hk-btn-danger) {
-		width: 100%;
-		justify-content: center;
-		height: 2.75rem;
+	.dd-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 0.75rem;
 	}
 	.inline {
 		display: inline;

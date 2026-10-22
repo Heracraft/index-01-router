@@ -46,8 +46,28 @@
 		display: block;
 		height: 0.75rem;
 		border-radius: var(--hk-radius-xs);
-		background: var(--hk-surface-2);
-		animation: hk-pulse 1.6s var(--hk-ease) infinite;
+		background:
+			linear-gradient(
+					90deg,
+					transparent 0%,
+					color-mix(in srgb, var(--hk-surface) 70%, transparent) 50%,
+					transparent 100%
+				)
+				0 0 / 200% 100% no-repeat,
+			var(--hk-surface-2);
+		animation: hk-shimmer 1.6s linear infinite;
+	}
+	@keyframes hk-shimmer {
+		from {
+			background-position:
+				150% 0,
+				0 0;
+		}
+		to {
+			background-position:
+				-50% 0,
+				0 0;
+		}
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.hk .hk-skeleton {

@@ -1,2 +1,5 @@
-/** Connection state of the /events stream, read by pages that show a Live dot */
-export const live = $state({ connected: false });
+/** Connection state of the /events stream, and the recording to mark once after an upload */
+export const live = $state<{ connected: boolean; flash: string | null }>({
+	connected: false,
+	flash: null
+});

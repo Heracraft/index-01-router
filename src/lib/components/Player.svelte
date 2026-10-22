@@ -18,14 +18,12 @@
 	const total = $derived(here && audio.duration ? audio.duration * 1000 : durationMs);
 	const rate = $derived(audio.rate === 1 ? '1×' : `${audio.rate}×`);
 
-	let width = $state(600);
-	const bars = $derived(Math.max(24, Math.min(110, Math.floor(width / 5))));
 	onMount(() => {
 		loadPeaks(id);
 	});
 </script>
 
-<div class="player" bind:clientWidth={width}>
+<div class="player">
 	<button
 		type="button"
 		class="pbtn"
@@ -34,7 +32,7 @@
 	>
 		<Icon name={on ? 'pause' : 'play'} size={16} />
 	</button>
-	<Waveform {id} {durationMs} {bars} height={34} />
+	<Waveform {id} {durationMs} height={34} />
 	<span class="ptime"
 		><b>{formatDuration(here ? audio.time * 1000 : 0)}</b><span class="dur"
 			>&nbsp;/ {formatDuration(total)}</span

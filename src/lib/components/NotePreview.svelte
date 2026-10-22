@@ -1,6 +1,6 @@
 <script lang="ts">
 	/* The note as a delivery would write it, laid out as the vault shows it: path on top, the
-	   new entry's lines marked with the accent dot */
+	   new entry's lines marked with the accent rule */
 	interface Props {
 		/** Rendered note path; null when pathError is set */
 		path: string | null;
@@ -56,8 +56,7 @@
 	}
 	.ln.e--this {
 		color: var(--hk-text);
-	}
-	.ln.e--this::before {
-		top: 0.85rem;
+		margin-inline: -0.75rem;
+		padding-inline: 0.75rem;
 	}
 </style>

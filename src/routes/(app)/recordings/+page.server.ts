@@ -1,7 +1,8 @@
 import { and, eq, ilike, inArray, lt, sql, type SQL } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
 import { recordings } from '#lib/server/db/schema.ts';
-import { entryRecs } from '#lib/server/journal.ts';
+import { entryRecs, loadRail } from '#lib/server/journal.ts';
+import { getSettings } from '#lib/server/settings.ts';
 import { PENDING_STATUSES } from '#lib/format.ts';
 import type { PageServerLoad } from './$types';
 
@@ -27,7 +28,8 @@ export const load: PageServerLoad = async ({ url }) => {
 	const before = beforeRaw && !Number.isNaN(Date.parse(beforeRaw)) ? new Date(beforeRaw) : null;
 	const search = q ? ilike(recordings.transcript, `%${escapeLike(q)}%`) : undefined;
 
-	const [recs, [counts]] = await Promise.all([
+	const { timezone } = await getSettings('general');
+	const [recs, [counts], rail] = await Promise.all([
 		entryRecs(
 			and(filterWhere(filter), search, before ? lt(recordings.recordedAt, before) : undefined),
 			PAGE + 1
@@ -45,7 +47,8 @@ export const load: PageServerLoad = async ({ url }) => {
 				done: sql<number>`count(*) filter (where ${recordings.status} = 'done')`.mapWith(Number)
 			})
 			.from(recordings)
-			.where(search)
+			.where(search),
+		loadRail(null, timezone, url.searchParams.get('m'))
 	]);
 	const more = recs.length > PAGE;
 	if (more) recs.length = PAGE;
@@ -56,6 +59,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		before: before?.toISOString() ?? null,
 		next: more && last ? new Date(last.recordedAt).toISOString() : null,
 		counts: counts ?? { all: 0, failed: 0, pending: 0, done: 0 },
-		recs
+		recs,
+		rail
 	};
 };

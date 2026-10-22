@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import Icon from '#lib/components/Icon.svelte';
+	import SettingsNav from '#lib/components/SettingsNav.svelte';
 	import { dayKey, dayLabel, formatBytes, formatTime, triggerLabel } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
@@ -20,6 +20,12 @@
 		}
 		return out;
 	});
+	const nav = [
+		{ id: 'note', label: 'Daily note' },
+		{ id: 'transcription', label: 'Transcription' },
+		{ id: 'ring', label: 'Ring' },
+		{ id: 'general', label: 'General' }
+	];
 	const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 	/** Nothing for the usual outcome, the reason otherwise */
 	const resultOf = (e: (typeof data.events)[number]) =>
@@ -34,17 +40,22 @@
 
 <svelte:head><title>Requests · Index 01</title></svelte:head>
 
-<div class="shell shell--one">
+<div class="shell">
+	<SettingsNav items={nav} current="requests" />
 	<main id="main" class="col" tabindex="-1">
-		<a class="back" href="{resolve('/(app)/settings')}#ring"><Icon name="left" />Settings</a>
-		<h1 class="hk-h1-app">Requests</h1>
-		<nav class="filters" aria-label="Show">
-			<a href={resolve('/(app)/settings/requests')} class:cur={data.show === 'all'}
-				>All {data.counts.all}</a
+		<h1 class="hk-h1-app page-h">Requests</h1>
+		<nav class="tabs" aria-label="Show">
+			<a
+				href={resolve('/(app)/settings/requests')}
+				class:cur={data.show === 'all'}
+				aria-current={data.show === 'all' ? 'page' : undefined}
+				>All<span class="tab-n">{data.counts.all}</span></a
 			>
 			<a
 				href="{resolve('/(app)/settings/requests')}?show=rejected"
-				class:cur={data.show === 'rejected'}>Rejected {data.counts.rejected}</a
+				class:cur={data.show === 'rejected'}
+				aria-current={data.show === 'rejected' ? 'page' : undefined}
+				>Rejected<span class="tab-n">{data.counts.rejected}</span></a
 			>
 		</nav>
 		{#if data.events.length === 0}
@@ -55,22 +66,22 @@
 				<h2 class="grp-h">{g.label}</h2>
 				<ul class="rej log">
 					{#each g.rows as e (e.id)}
-						<li>
-							<span class="r-t">{formatTime(e.at, tz, true)}</span>
-							<span class="r-c" class:ok={e.status < 300}>{e.status}</span>
+						{@const bad = e.status >= 300}
+						<li class:link={!!e.recordingId}>
+							{#if e.recordingId}
+								<a class="r-t" href={resolve('/(app)/recordings/[id]', { id: e.recordingId })}
+									>{formatTime(e.at, tz, true)}</a
+								>
+							{:else}
+								<span class="r-t">{formatTime(e.at, tz, true)}</span>
+							{/if}
 							<span class="what">
-								{#if e.recordingId}
-									<a href={resolve('/(app)/recordings/[id]', { id: e.recordingId })}
-										>{triggerLabel(e.trigger) || 'Recording'}</a
-									>
-								{:else}
-									<span>{triggerLabel(e.trigger)}</span>
-								{/if}
-								{#if resultOf(e)}<span class:bad={e.status >= 300} class:muted={e.status < 300}
-										>{resultOf(e)}</span
-									>{/if}
-								{#if !e.signed && e.status < 300 && !e.test}<span class="muted">Unsigned</span>{/if}
+								<span class="r-g">{triggerLabel(e.trigger)}</span>
+								<span class="r-m" class:bad
+									>{resultOf(e) || (e.signed || e.test ? '' : 'Unsigned')}</span
+								>
 							</span>
+							<span class="r-c">{e.status === 200 ? '' : e.status}</span>
 							<span class="r-s">{e.bytes ? formatBytes(e.bytes) : ''}</span>
 						</li>
 					{/each}
@@ -81,25 +92,52 @@
 </div>
 
 <style>
-	h1 {
-		margin: 0 0 1.25rem;
-	}
-	.filters {
-		margin: 0 0 0.5rem;
-	}
-	.what {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0 0.625rem;
-		min-width: 0;
-	}
-	.what a {
-		color: var(--hk-text);
+	.page-h {
+		margin: 0 0 1rem;
 	}
 	.bad {
 		color: var(--hk-err);
 	}
+	.what {
+		display: flex;
+		gap: 0 0.75rem;
+		min-width: 0;
+	}
+	.r-g {
+		flex: none;
+		width: 6.5rem;
+		color: var(--hk-text-2);
+	}
+	.r-m {
+		min-width: 0;
+		color: var(--hk-text-3);
+	}
+	.link {
+		position: relative;
+	}
+	a.r-t {
+		text-decoration: none;
+	}
+	a.r-t::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+	}
+	.link:hover {
+		background: var(--hk-hover);
+	}
 	.log :global(li) {
-		grid-template-columns: 5rem 2.5rem minmax(0, 1fr) auto;
+		grid-template-columns: 4.75rem minmax(0, 1fr) 2.5rem 4rem;
+	}
+	@media (max-width: 639.98px) {
+		.log :global(li) {
+			grid-template-columns: 4.25rem minmax(0, 1fr) 2.25rem;
+		}
+		.what {
+			flex-wrap: wrap;
+		}
+		.r-g {
+			width: auto;
+		}
 	}
 </style>

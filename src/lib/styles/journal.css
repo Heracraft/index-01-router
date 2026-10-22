@@ -1,13 +1,10 @@
 /* Journal layout on top of the Herakraft kit. Only --hk-* tokens; kit file untouched. */
 
 .hk {
+	/* One page width: the header row and every page's shell share both edges */
+	--page-max: 66rem;
 	font-size: 15px;
 	line-height: 1.6;
-}
-@media (min-width: 900px) {
-	html {
-		scrollbar-gutter: stable;
-	}
 }
 .hk .ic {
 	flex: none;
@@ -25,7 +22,7 @@
 	padding-top: env(safe-area-inset-top, 0px);
 }
 .hk .top-in {
-	max-width: 66rem;
+	max-width: var(--page-max);
 	margin: 0 auto;
 	padding: 0 1.25rem;
 	height: 3.5rem;
@@ -66,8 +63,9 @@
 	height: 1.75rem;
 }
 .hk .iconbtn.is-cur {
-	color: var(--hk-accent);
+	color: var(--hk-text);
 	background: var(--hk-surface-2);
+	box-shadow: inset 0 0 0 1px var(--hk-hairline);
 }
 .hk .iconbtn:disabled,
 .hk .iconbtn[aria-disabled='true'] {
@@ -89,20 +87,15 @@
 
 /* shell */
 .hk .shell {
-	max-width: 66rem;
+	max-width: var(--page-max);
 	margin: 0 auto;
 	padding: 2.25rem 1.25rem 5rem;
 	display: grid;
 	grid-template-columns: 13.5rem minmax(0, 1fr);
 	gap: 3.5rem;
 }
-.hk .shell--one {
-	grid-template-columns: minmax(0, 1fr);
-	max-width: 47.5rem;
-}
 .hk .col {
 	min-width: 0;
-	max-width: 44rem;
 }
 .hk .rail {
 	position: sticky;
@@ -219,37 +212,32 @@
 	font-size: 0.8125rem;
 }
 
-/* day head */
+/* day head: the day's name with the day before and after beside it */
 .hk .dayhead {
 	display: flex;
-	align-items: flex-end;
-	justify-content: space-between;
-	gap: 1rem;
-	margin-bottom: 1.5rem;
+	align-items: center;
+	gap: 0.75rem;
+	margin-bottom: 1.25rem;
 }
 .hk .dh-t {
 	margin: 0;
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	column-gap: 0.75rem;
-}
-.hk .dh-sub {
-	font-family: var(--hk-font-display);
-	font-weight: 400;
-	font-size: 1.125rem;
-	letter-spacing: 0;
-	color: var(--hk-text-3);
 }
 .hk .dh-nav {
 	display: flex;
-	gap: 0.375rem;
+	gap: 0.125rem;
+}
+.hk .dh-nav .iconbtn {
+	color: var(--hk-text-3);
+}
+.hk .dh-nav .iconbtn:hover {
+	color: var(--hk-text);
 }
 .hk :is(.hk-btn-secondary, .hk-btn-ghost, .hk-btn, .hk-btn-danger).hk-btn-sm {
 	gap: 0.375rem;
 }
 .hk .open.dh-open {
 	display: none;
+	margin-left: auto;
 }
 
 /* the sheet: one day's note */
@@ -274,6 +262,21 @@
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+	min-width: 0;
+}
+.hk .path-h {
+	color: var(--hk-text-4);
+}
+/* A note card's header: the state of the line, then the path */
+.hk .path-s {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-width: 0;
+	font-size: 0.8125rem;
+}
+.hk .path-s .bad {
+	color: var(--hk-err);
 }
 .hk .open {
 	display: inline-flex;
@@ -312,11 +315,38 @@
 
 /* entry row */
 .hk .e {
+	position: relative;
 	display: grid;
 	grid-template-columns: 3.25rem minmax(0, 1fr) auto;
 	column-gap: 1rem;
-	padding: 0.625rem 0;
+	padding: 0.625rem 0.75rem;
+	margin-inline: -0.75rem;
+	border-radius: var(--hk-radius);
 	align-items: start;
+}
+/* The whole line opens its recording; controls inside stay on top of that link */
+.hk .e > a.e-t::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+}
+.hk .e:has(> a.e-t):hover {
+	background: var(--hk-hover);
+}
+.hk .e > .pp,
+.hk .e .e-b :is(button, a, form, mark, .iprog) {
+	position: relative;
+	z-index: 1;
+}
+.hk .e--flash {
+	animation: hk-flash 2.4s var(--hk-ease);
+}
+@keyframes hk-flash {
+	0%,
+	40% {
+		background: var(--hk-accent-wash);
+	}
 }
 .hk .e-t {
 	font-size: 0.875rem;
@@ -325,8 +355,8 @@
 	font-variant-numeric: tabular-nums;
 	text-decoration: none;
 }
-.hk a.e-t:hover {
-	color: var(--hk-accent);
+.hk .e:has(> a.e-t):hover > .e-t {
+	color: var(--hk-text);
 }
 .hk .e-b {
 	min-width: 0;
@@ -340,6 +370,13 @@
 	text-wrap: pretty;
 	overflow-wrap: anywhere;
 	white-space: pre-line;
+}
+.hk .e-x.clamp2 {
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
 }
 .hk .e-x.clamped {
 	display: -webkit-box;
@@ -419,6 +456,11 @@
 	border-color: var(--hk-text);
 	color: var(--hk-text);
 }
+.hk .pp--icon {
+	width: 1.5rem;
+	padding: 0;
+	justify-content: center;
+}
 .hk .pp:disabled {
 	opacity: 0.5;
 	cursor: default;
@@ -439,13 +481,12 @@
 	height: 1.25rem;
 	display: flex;
 	align-items: center;
-	gap: 2px;
+	justify-content: space-between;
 	cursor: pointer;
 	touch-action: none;
 }
 .hk .iwave i {
-	flex: 1;
-	min-width: 0;
+	flex: 0 0 2px;
 	border-radius: 1px;
 	background: var(--hk-border-strong);
 }
@@ -462,7 +503,8 @@
 .hk .e-s {
 	display: flex;
 	align-items: center;
-	gap: 0.5rem;
+	flex-wrap: wrap;
+	gap: 0 0.5rem;
 	margin: 0;
 	font-size: 0.8125rem;
 	line-height: 1.75rem;
@@ -487,68 +529,48 @@
 		opacity: 0.25;
 	}
 }
-.hk .skel {
-	display: block;
-	height: 0.6875rem;
-	margin: 0.5rem 0 0.4375rem;
-	border-radius: 4px;
-	background: var(--hk-surface-2);
+/* Work in progress: a small turning ring */
+.hk .spin {
+	flex: none;
+	width: 10px;
+	height: 10px;
+	border-radius: 99px;
+	border: 1.5px solid var(--hk-border-strong);
+	border-top-color: var(--hk-text-2);
+	animation: hk-spin 0.9s linear infinite;
+}
+@keyframes hk-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
-/* failed in place */
-.hk .fail {
-	border-radius: var(--hk-radius);
-	background: var(--hk-err-wash);
-	padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+/* failed: a red dot, the cause in red, and the fix as a quiet button */
+.hk .fdot {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 99px;
+	background: var(--hk-err-dot);
 }
-.hk .fail-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 0.5rem 0.75rem;
-	flex-wrap: wrap;
-}
-.hk .fail-l {
-	display: flex;
-	align-items: center;
-	gap: 0.625rem;
-	min-width: 0;
-}
-.hk .fail-c {
-	font-size: 0.9375rem;
-	font-weight: 500;
+.hk .e-s--err {
 	color: var(--hk-err);
 }
-.hk .fail-a {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-	margin-left: auto;
+.hk .fail-c {
+	font-weight: 500;
 }
-.hk .fail-a form {
+.hk .e-s form {
 	display: contents;
 }
-.hk .fail .pp {
-	margin: 0;
-	height: 1.875rem;
-	background: transparent;
-	border-color: color-mix(in srgb, var(--hk-err) 25%, transparent);
-}
-.hk .fail-raw {
-	margin: 0.5rem 0.375rem 0.125rem 0;
-	padding-top: 0.5rem;
-	border-top: 1px solid color-mix(in srgb, var(--hk-err) 18%, transparent);
-	font-family: var(--hk-font-mono);
-	font-size: 0.75rem;
-	line-height: 1.5;
-	color: var(--hk-text-3);
-	overflow-wrap: anywhere;
-}
-.hk .fail-text {
-	margin: 0.375rem 0.375rem 0.125rem 0;
-	font-size: 0.9375rem;
-	line-height: 1.6;
+.hk .e-act {
+	height: 1.75rem;
+	margin-left: 0.25rem;
+	padding: 0 0.5rem;
 	color: var(--hk-text-2);
+	font-weight: 500;
+}
+.hk .e-act:hover {
+	color: var(--hk-text);
 }
 .hk .ring-err {
 	width: 9px;
@@ -625,7 +647,6 @@
 }
 .hk .transcript {
 	margin-top: 2rem;
-	max-width: 64ch;
 }
 .hk .transcript p {
 	margin: 0;
@@ -699,26 +720,15 @@
 	line-height: 1.6rem;
 	font-size: 0.8125rem;
 }
-.hk .e--this,
+.hk .e--this {
+	background: var(--hk-accent-wash);
+	box-shadow: inset 2px 0 0 var(--hk-accent);
+	border-radius: 0 var(--hk-radius) var(--hk-radius) 0;
+}
 .hk .e--pending {
-	position: relative;
-}
-.hk .e--this::before,
-.hk .e--pending::before {
-	content: '';
-	position: absolute;
-	left: -0.875rem;
-	top: 1.0625rem;
-	width: 6px;
-	height: 6px;
-	border-radius: 99px;
-	background: var(--hk-accent);
-}
-.hk .e--pending::before {
-	width: 7px;
-	height: 7px;
-	background: transparent;
-	box-shadow: inset 0 0 0 1.5px var(--hk-warn-dot);
+	background: color-mix(in srgb, var(--hk-warn-wash) 50%, transparent);
+	box-shadow: inset 2px 0 0 var(--hk-warn-dot);
+	border-radius: 0 var(--hk-radius) var(--hk-radius) 0;
 }
 .hk .e--pending .e-x {
 	color: var(--hk-text-2);
@@ -726,7 +736,8 @@
 .hk .ctx-gap {
 	color: var(--hk-text-4);
 	font-size: 0.875rem;
-	padding: 0.25rem 0 0.25rem 4.25rem;
+	line-height: 1rem;
+	padding: 0 0 0.25rem 4.25rem;
 	list-style: none;
 }
 .hk .tasks {
@@ -752,68 +763,33 @@
 	color: var(--hk-text-3);
 }
 
-/* problem block on the recording page */
-.hk .problem {
+/* problem on the recording page: one line, a red rule, the fix on the right */
+.hk .issue {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
 	margin-bottom: 1.25rem;
-	padding: 1rem 1rem 1rem 1.125rem;
+	padding: 0.75rem 0.75rem 0.75rem 1rem;
+	border: 1px solid var(--hk-border);
 	border-radius: var(--hk-radius-lg);
-	background: var(--hk-err-wash);
-	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hk-err) 20%, transparent);
+	background: var(--hk-surface);
+	box-shadow: inset 3px 0 0 var(--hk-err-dot);
 }
-.hk .problem-c {
+.hk .issue-t {
+	flex: 1;
+	min-width: 0;
+}
+.hk .issue-c {
 	margin: 0;
-	font-size: 1rem;
-	font-weight: 600;
-	color: var(--hk-err);
-}
-.hk .problem-f {
-	margin: 0.125rem 0 0;
-	font-size: 0.8125rem;
-	color: var(--hk-text-2);
-	font-variant-numeric: tabular-nums;
-}
-.hk .problem .fail-raw {
-	margin: 0.75rem 0 0;
-	padding-top: 0.625rem;
-}
-.hk .problem-a {
-	margin-top: 0.875rem;
-}
-.hk .problem-a .hk-btn,
-.hk .problem-a .hk-btn-danger {
-	width: 100%;
-	justify-content: center;
-	height: 2.75rem;
-}
-.hk .track {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 0.5rem;
-	list-style: none;
-	margin: 0.875rem 0 0;
-	padding: 0;
-	font-size: 0.8125rem;
-}
-.hk .track li {
-	padding-top: 0.5rem;
-	border-top: 2px solid var(--hk-text-3);
-	color: var(--hk-text-2);
-}
-.hk .track li.no {
-	border-top-color: var(--hk-border-strong);
-	color: var(--hk-text-4);
-}
-.hk .track li.bad {
-	border-top-color: var(--hk-err-dot);
-	color: var(--hk-err);
-}
-.hk .track b {
-	display: block;
+	font-size: 0.9375rem;
 	font-weight: 500;
+	color: var(--hk-err);
 }
-.hk .track span {
-	font-variant-numeric: tabular-nums;
+.hk .issue-f {
+	margin: 0;
+	font-size: 0.8125rem;
 	color: var(--hk-text-3);
+	font-variant-numeric: tabular-nums;
 }
 
 /* player */
@@ -848,14 +824,13 @@
 	height: 2.25rem;
 	display: flex;
 	align-items: center;
-	gap: 2px;
+	justify-content: space-between;
 	cursor: pointer;
 	touch-action: none;
 }
 .hk .wave i {
-	flex: 1;
-	min-width: 0;
-	border-radius: 2px;
+	flex: 0 0 2px;
+	border-radius: 1px;
 	background: var(--hk-border-strong);
 }
 .hk .wave i.on {
@@ -953,12 +928,6 @@
 }
 
 /* settings */
-.hk .col--set {
-	max-width: 42rem;
-}
-.hk .col--set > h1 {
-	margin: 0 0 0.5rem;
-}
 .hk .snav {
 	display: flex;
 	flex-direction: column;
@@ -985,12 +954,16 @@
 	box-shadow: inset 0 0 0 1px var(--hk-hairline);
 	color: var(--hk-text);
 }
+.hk .snav-sep {
+	height: 1px;
+	margin: 0.5rem 0.625rem;
+	background: var(--hk-hairline);
+}
 .hk .sdot {
 	width: 6px;
 	height: 6px;
 	border-radius: 99px;
 	margin-left: auto;
-	background: var(--hk-ok-dot);
 }
 .hk .sdot.warn {
 	background: var(--hk-warn-dot);
@@ -1060,8 +1033,10 @@
 }
 .hk .tokens {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 0.25rem 1rem;
+	gap: 1rem;
+	overflow-x: auto;
+	scrollbar-width: none;
+	white-space: nowrap;
 }
 .hk .tokens button {
 	border: 0;
@@ -1293,13 +1268,13 @@
 	display: none;
 }
 .hk .tchip:has(input:checked) {
-	border-color: var(--hk-accent);
+	border-color: var(--hk-text);
 	color: var(--hk-text);
-	box-shadow: inset 0 0 0 0.5px var(--hk-accent);
+	background: var(--hk-surface);
 }
 .hk .tchip:has(input:checked) .ic {
 	display: block;
-	color: var(--hk-accent);
+	color: var(--hk-text);
 }
 .hk .tchip:has(input:focus-visible) {
 	outline: 2px solid var(--hk-accent);
@@ -1345,7 +1320,7 @@
 }
 .hk .rej li {
 	display: grid;
-	grid-template-columns: 7rem 2.5rem minmax(0, 1fr) auto;
+	grid-template-columns: 7rem minmax(0, 1fr) 2.5rem 4rem;
 	gap: 0.75rem;
 	align-items: center;
 	min-height: 2.5rem;
@@ -1362,6 +1337,9 @@
 }
 .hk .r-c.ok {
 	color: var(--hk-text-3);
+}
+.hk .r-c {
+	text-align: right;
 }
 .hk .r-s {
 	color: var(--hk-text-3);
@@ -1426,32 +1404,57 @@
 
 /* search list */
 .hk .search {
+	position: relative;
 	display: flex;
-	gap: 0.5rem;
-	margin-bottom: 1.5rem;
+	align-items: center;
+	margin-bottom: 1rem;
+}
+.hk .search > .ic {
+	position: absolute;
+	left: 0.875rem;
+	color: var(--hk-text-3);
+	pointer-events: none;
 }
 .hk .search .hk-input {
 	flex: 1;
 	height: 2.75rem;
+	padding-left: 2.625rem;
 	font-size: 1rem;
 }
-.hk .filters {
+/* underline tabs: list filters */
+.hk .tabs {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 0.25rem 1rem;
-	margin: -0.75rem 0 1.5rem;
+	gap: 1.5rem;
+	margin: 0 0 0.5rem;
+	border-bottom: 1px solid var(--hk-hairline);
 	font-size: 0.875rem;
+	overflow-x: auto;
+	scrollbar-width: none;
 }
-.hk .filters a {
+.hk .tabs a {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	height: 2.5rem;
+	border-bottom: 2px solid transparent;
 	color: var(--hk-text-3);
 	text-decoration: none;
+	white-space: nowrap;
 }
-.hk .filters a:hover {
+.hk .tabs a:hover {
 	color: var(--hk-text);
 }
-.hk .filters a.cur {
+.hk .tabs a.cur {
 	color: var(--hk-text);
-	font-weight: 500;
+	border-bottom-color: var(--hk-text);
+}
+.hk .tab-n {
+	font-size: 0.75rem;
+	color: var(--hk-text-4);
+	font-variant-numeric: tabular-nums;
+}
+.hk .tabs a.cur .tab-n {
+	color: var(--hk-text-3);
 }
 .hk .grp {
 	margin-top: 1.75rem;
@@ -1461,7 +1464,7 @@
 	align-items: baseline;
 	justify-content: space-between;
 	gap: 1rem;
-	margin: 0 0 0.25rem;
+	margin: 0 0 0.5rem;
 	font-family: var(--hk-font-display);
 	font-weight: 400;
 	font-size: 1.125rem;
@@ -1548,24 +1551,21 @@
 		margin-bottom: 1rem;
 		padding: 0 0.75rem;
 		height: 2.75rem;
+		border: 1px solid var(--hk-border);
 		border-radius: var(--hk-radius);
-		background: var(--hk-err-wash);
-		color: var(--hk-err);
+		background: var(--hk-surface);
+		color: var(--hk-text-2);
 		font-size: 0.875rem;
-		font-weight: 500;
 		text-decoration: none;
 	}
 	.hk .needbar .ic {
 		margin-left: auto;
-	}
-	.hk .dh-nav {
-		display: none;
+		color: var(--hk-text-3);
 	}
 	.hk .prevday {
 		display: flex;
 	}
 	.hk .dayhead {
-		align-items: baseline;
 		margin-bottom: 1rem;
 	}
 	.hk .open.dh-open {
@@ -1582,6 +1582,9 @@
 	.hk .sheet-bar {
 		padding: 0 0.75rem 0 1rem;
 	}
+	.hk .path-h {
+		display: none;
+	}
 	.hk .sheet-body,
 	.hk .sheet--sm .sheet-body {
 		padding: 1.125rem 1rem 0.5rem;
@@ -1590,7 +1593,7 @@
 		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-areas: 't p' 'x x';
 		row-gap: 0.125rem;
-		padding: 0.75rem 0;
+		padding: 0.75rem;
 	}
 	.hk .e > .e-t {
 		grid-area: t;
@@ -1617,18 +1620,9 @@
 		border-left: 0;
 		border-right: 0;
 	}
-	.hk .fail .pp,
-	.hk .fail .hk-btn-sm {
-		height: 2.25rem;
-	}
 	.hk .sheet--sm .e {
 		grid-template-columns: minmax(0, 1fr);
 		grid-template-areas: 't' 'x';
-	}
-	.hk .e--this::before,
-	.hk .e--pending::before {
-		left: -0.625rem;
-		top: 1.3rem;
 	}
 	.hk .ctx-gap {
 		padding-left: 0;
@@ -1641,9 +1635,6 @@
 	.hk .dh-t {
 		font-size: 1.375rem;
 		line-height: 1.875rem;
-	}
-	.hk .dh-sub {
-		font-size: 1rem;
 	}
 	.hk .transcript p {
 		font-size: 1.0625rem;
@@ -1659,7 +1650,7 @@
 		grid-template-columns: minmax(0, 1fr);
 	}
 	.hk .rej li {
-		grid-template-columns: 5.5rem 2.25rem minmax(0, 1fr);
+		grid-template-columns: 5.5rem minmax(0, 1fr) 2.25rem;
 	}
 	.hk .r-s {
 		display: none;
@@ -1672,9 +1663,6 @@
 	}
 	.hk .tacts .hk-btn-ghost {
 		height: 2.75rem;
-	}
-	.hk .track {
-		font-size: 0.75rem;
 	}
 }
 

@@ -5,6 +5,7 @@
 	import ConfirmAction from './ConfirmAction.svelte';
 	import CopyButton from './CopyButton.svelte';
 	import Icon from './Icon.svelte';
+	import SaveBar from './SaveBar.svelte';
 	import Switch from './Switch.svelte';
 	import { sectionSubmit } from './section-submit.ts';
 	import type { DirtyForms } from './dirty.svelte.ts';
@@ -60,7 +61,7 @@
 	<div class="f">
 		<span class="hk-field-label" id="url-label">Webhook URL</span>
 		<div class="hk-secret" aria-labelledby="url-label">
-			<span class="scroll">{ring.webhookUrl}</span>
+			<span class="scroll url">{ring.webhookUrl}</span>
 			<CopyButton text={ring.webhookUrl} label="Copy" />
 		</div>
 	</div>
@@ -120,6 +121,7 @@
 			/>
 		</div>
 	</form>
+	<SaveBar {dirty} keys={['ring']} />
 
 	{#if ring.rejected.length}
 		<h3 class="sub">Rejected <span class="cnt">{ring.rejected.length}</span></h3>
@@ -127,8 +129,8 @@
 			{#each ring.rejected.slice(0, 6) as e (e.id)}
 				<li>
 					<span class="r-t">{when(e.at)}</span>
+					<span class="r-m">{capital(e.reason)}</span>
 					<span class="r-c">{e.status}</span>
-					<span>{capital(e.reason)}</span>
 					<span class="r-s">{e.bytes ? formatBytes(e.bytes) : ''}</span>
 				</li>
 			{/each}
@@ -161,5 +163,11 @@
 	}
 	.hk-secret :global(.copy) {
 		font-family: var(--hk-font-sans);
+	}
+	.url {
+		white-space: normal;
+		overflow-wrap: anywhere;
+		line-height: 1.45;
+		padding-block: 0.5rem;
 	}
 </style>

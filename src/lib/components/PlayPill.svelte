@@ -10,14 +10,15 @@
 	}
 	let { id, durationMs }: Props = $props();
 	const on = $derived(audio.isPlaying(id));
-	const label = $derived(formatDuration(durationMs) || 'Play');
+	const dur = $derived(formatDuration(durationMs));
 </script>
 
 <button
 	type="button"
 	class="pp"
 	class:on
-	aria-label="{on ? 'Pause' : 'Play'} {label}"
+	class:pp--icon={!dur}
+	aria-label="{on ? 'Pause' : 'Play'}{dur ? ` ${dur}` : ''}"
 	aria-pressed={on}
 	onclick={() => {
 		audio.toggle(id, durationMs);
@@ -25,5 +26,5 @@
 	}}
 >
 	<Icon name={on ? 'pause' : 'play'} size={10} />
-	<span>{label}</span>
+	{#if dur}<span>{dur}</span>{/if}
 </button>

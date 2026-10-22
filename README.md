@@ -37,7 +37,8 @@ URL. It signs you in through any OIDC provider.
    - `OPENAI_API_KEY`, or set the key later under Settings > Transcription.
    - `OBSIDIAN_MCP_URL`: the `/mcp/` endpoint of your Obsidian REST server, for example
      `https://vault.example.com/mcp/`, and `OBSIDIAN_API_KEY`: its bearer key. See
-     [Obsidian](#obsidian).
+     [Obsidian](#obsidian). With more than one vault in Obsidian, also set `OBSIDIAN_VAULT` to
+     the vault's name so **Open in Obsidian** opens the right one.
 
    Coolify generates `SERVICE_USER_POSTGRES`, `SERVICE_PASSWORD_POSTGRES` and
    `SERVICE_HEX_64_AUTHSECRET` ([magic variables](https://coolify.io/docs/knowledge-base/docker/compose)).

@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	/* Month of days: a grey dot where recordings were, red where one failed */
 	import Icon from './Icon.svelte';
 	import { monthGrid, monthLabel } from './days.ts';
 
 	interface Props {
-		day: string;
+		/** Picked day, or null for none */
+		day: string | null;
 		today: string;
 		month: string;
 		prevMonth: string;
@@ -15,19 +17,23 @@
 	let { day, today, month, prevMonth, nextMonth, dots }: Props = $props();
 
 	const cells = $derived(monthGrid(month));
-	const here = $derived(
-		day === today ? resolve('/(app)') : resolve('/(app)/day/[date]', { date: day })
-	);
+	// Another month on the same page: the current URL with ?m=
+	const monthHref = (m: string) => {
+		const u = new URL(page.url.href);
+		u.searchParams.set('m', m);
+		return `${u.pathname}${u.search}`;
+	};
 	const canNext = $derived(nextMonth <= today.slice(0, 7));
 </script>
 
 <div class="cal">
 	<div class="cal-head">
 		<span class="cal-m">{monthLabel(month)}</span>
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- month links are this page's own URL -->
 		<span class="cal-nav">
 			<a
 				class="hk-btn-ghost iconbtn sm"
-				href="{here}?m={prevMonth}"
+				href={monthHref(prevMonth)}
 				aria-label={monthLabel(prevMonth)}
 				data-sveltekit-reset="false"
 				data-sveltekit-replacestate><Icon name="left" /></a
@@ -35,7 +41,7 @@
 			{#if canNext}
 				<a
 					class="hk-btn-ghost iconbtn sm"
-					href="{here}?m={nextMonth}"
+					href={monthHref(nextMonth)}
 					aria-label={monthLabel(nextMonth)}
 					data-sveltekit-reset="false"
 					data-sveltekit-replacestate><Icon name="right" /></a
@@ -44,6 +50,7 @@
 				<span class="hk-btn-ghost iconbtn sm" aria-disabled="true"><Icon name="right" /></span>
 			{/if}
 		</span>
+		<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	</div>
 	<div class="cal-grid">
 		{#each ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as d, i (i)}<em aria-hidden="true">{d}</em>{/each}

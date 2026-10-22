@@ -65,7 +65,12 @@ export const actions: Actions = {
 				recordedAt,
 				audio: { bytes: new Uint8Array(await file.arrayBuffer()), mime }
 			});
-			return { uploaded: recording.id };
+			const { timezone } = await getSettings('general');
+			return {
+				uploaded: recording.id,
+				day: dayKey(recordedAt, timezone),
+				today: dayKey(new Date(), timezone)
+			};
 		} catch (e) {
 			console.error('upload failed', e);
 			return fail(500, { upload: `Could not store ${file.name}: ${(e as Error).message}` });

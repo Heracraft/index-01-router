@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import EntryRow from '#lib/components/EntryRow.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import Rail from '#lib/components/Rail.svelte';
 	import { longDay, relativeDay } from '#lib/components/days.ts';
 	import { dayKey } from '#lib/format.ts';
 	import type { PageProps } from './$types';
@@ -50,6 +51,10 @@
 	// Typing searches as you go: the GET form navigates, replacing the entry and keeping focus
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let searchForm = $state<HTMLFormElement>();
+	/** Focus on arrival when there is nothing typed yet: the search icon brought you here to type */
+	function focusEmpty(node: HTMLInputElement) {
+		if (!node.value) node.focus();
+	}
 	function typed() {
 		clearTimeout(timer);
 		timer = setTimeout(() => searchForm?.requestSubmit(), 250);
@@ -58,8 +63,16 @@
 
 <svelte:head><title>{data.q ? `${data.q} · ` : ''}Search · Index 01</title></svelte:head>
 
-<div class="shell shell--one">
+<div class="shell">
+	<Rail
+		day={null}
+		today={data.rail.today}
+		calendar={data.rail.calendar}
+		needs={data.rail.needs}
+		{tz}
+	/>
 	<main id="main" class="col" tabindex="-1">
+		<h1 class="hk-sr">Search</h1>
 		<form
 			bind:this={searchForm}
 			class="search"
@@ -71,6 +84,7 @@
 			onsubmit={() => clearTimeout(timer)}
 		>
 			{#if data.filter !== 'all'}<input type="hidden" name="status" value={data.filter} />{/if}
+			<Icon name="search" size={18} />
 			<input
 				class="hk-input"
 				type="search"
@@ -80,14 +94,17 @@
 				bind:value={q}
 				oninput={typed}
 				autocomplete="off"
+				use:focusEmpty
 			/>
 		</form>
-		<nav class="filters" aria-label="Show">
+		<nav class="tabs" aria-label="Show">
 			{#each FILTERS as f (f.id)}
 				{#if f.id === 'all' || f.n() > 0 || data.filter === f.id}
 					<a
 						href="{base}{qs({ status: f.id === 'all' ? null : f.id, before: null })}"
-						class:cur={data.filter === f.id}>{f.label} {f.n()}</a
+						class:cur={data.filter === f.id}
+						aria-current={data.filter === f.id ? 'page' : undefined}
+						>{f.label}<span class="tab-n">{f.n()}</span></a
 					>
 				{/if}
 			{/each}
@@ -113,11 +130,15 @@
 						>{relativeDay(g.key, today) ?? longDay(g.key)}</a
 					>
 				</h2>
-				<ul class="notes">
-					{#each g.rows as r (r.id)}
-						<EntryRow rec={r} {tz} mark={data.q} />
-					{/each}
-				</ul>
+				<div class="sheet">
+					<div class="sheet-body sheet-body--list">
+						<ul class="notes">
+							{#each g.rows as r (r.id)}
+								<EntryRow rec={r} {tz} mark={data.q} />
+							{/each}
+						</ul>
+					</div>
+				</div>
 			</section>
 		{/each}
 
@@ -136,6 +157,9 @@
 </div>
 
 <style>
+	.sheet-body--list {
+		padding-block: 0.5rem;
+	}
 	.pager {
 		display: flex;
 		gap: 0.5rem;

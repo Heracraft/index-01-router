@@ -3,6 +3,7 @@
 	   writes, and the Obsidian connection folded to one health fact */
 	import ConfirmAction from './ConfirmAction.svelte';
 	import Icon from './Icon.svelte';
+	import SaveBar from './SaveBar.svelte';
 	import SecretField from './SecretField.svelte';
 	import Switch from './Switch.svelte';
 	import TestResult from './TestResult.svelte';
@@ -112,8 +113,9 @@
 
 	// Preview: today's entry, rendered by the code delivery uses
 	const now = new Date();
+	// The path is today's; the line uses the newest recording's own time, so it does not tick
 	const vars = $derived({
-		recordedAt: now,
+		recordedAt: sample?.recordedAt ? new Date(sample.recordedAt) : now,
 		timeZone: timezone || 'UTC',
 		transcript: sample?.transcript?.trim() || 'Call the landlord about the plumber.',
 		languages: sample?.languages ?? ['en'],
@@ -124,7 +126,7 @@
 		let path: string | null = null;
 		let pathError: string | null = null;
 		try {
-			path = renderNotePath(valueOf('notePath'), vars);
+			path = renderNotePath(valueOf('notePath'), { ...vars, recordedAt: now });
 		} catch (e) {
 			pathError = (e as Error).message;
 		}
@@ -165,12 +167,12 @@
 	const lostKey = $derived(Object.values(note.secretsLost).some(Boolean));
 
 	// Token inserts at the caret
-	const areas: Record<string, HTMLTextAreaElement> = $state({});
+	const areas: Record<string, HTMLTextAreaElement | HTMLInputElement> = $state({});
 	function insert(k: string, token: string) {
 		const el = areas[k];
 		if (!el) return;
 		el.focus();
-		el.setRangeText(`{{${token}}}`, el.selectionStart, el.selectionEnd, 'end');
+		el.setRangeText(`{{${token}}}`, el.selectionStart ?? 0, el.selectionEnd ?? 0, 'end');
 		el.dispatchEvent(new Event('input', { bubbles: true }));
 	}
 	const tokenLabel = (t: string) => t.split(':')[0];
@@ -212,26 +214,38 @@
 		<input type="hidden" name="id" value={note.id ?? 'new'} />
 		{#if isNew}<input type="hidden" name="kind" value={note.kind.kind} />{/if}
 
-		<p class="statusline">
-			{#if lostKey}
-				<span class="ring-err" aria-hidden="true"></span>API key unreadable
-			{:else if failing && preview.path}
-				<span class="ring-warn" aria-hidden="true"></span>Not written to
-				<span class="hk-mono">{preview.path}</span> since {whenFact(note.lastFailed!.at)}
-			{:else if preview.path}
-				<Icon name="check" class="ok-check" />Today goes to
-				<span class="hk-mono">{preview.path}</span>
-			{:else}
-				<span class="ring-err" aria-hidden="true"></span>{preview.pathError}
-			{/if}
-		</p>
-
 		<article class="sheet sheet--sm preview" aria-label="Preview">
+			<div class="sheet-bar">
+				<span class="path-s">
+					{#if lostKey}
+						<span class="ring-err" aria-hidden="true"></span><span class="bad"
+							>API key unreadable</span
+						>
+					{:else if failing && preview.path}
+						<span class="ring-warn" aria-hidden="true"></span><span class="path"
+							>{preview.path}</span
+						><span class="since">No answer since {whenFact(note.lastFailed!.at)}</span>
+					{:else if preview.path}
+						<Icon name="check" size={14} class="ok-check" /><span class="path"
+							>{preview.path}<span class="path-h">{` › ${valueOf('heading')}`}</span></span
+						>
+					{:else}
+						<span class="ring-err" aria-hidden="true"></span><span class="bad"
+							>{preview.pathError}</span
+						>
+					{/if}
+				</span>
+			</div>
 			<div class="sheet-body">
 				<ul class="notes">
 					{#each preview.blocks as b, i (i)}
 						{#if b.type === 'heading'}
-							<li><h3 class="nh">{b.text}</h3></li>
+							{#if b.text.toLowerCase() !== valueOf('heading')
+									.trim()
+									.replace(/^#+\s*/, '')
+									.toLowerCase()}
+								<li><h3 class="nh">{b.text}</h3></li>
+							{/if}
 						{:else}
 							<li class="e e--typed">
 								<span class="e-t">{b.time ?? ''}</span>
@@ -240,7 +254,7 @@
 						{/if}
 					{/each}
 					{#each preview.entry as b, i (i)}
-						<li class="e e--this">
+						<li class="e">
 							<span class="e-t">{b.time ?? ''}</span>
 							<div class="e-b"><p class="e-x">{b.text}</p></div>
 						</li>
@@ -278,15 +292,16 @@
 		</div>
 		<div class="f">
 			<label class="hk-field-label" for="{key}-entry">Line</label>
-			<textarea
+			<input
 				id="{key}-entry"
 				bind:this={areas.entryTemplate}
 				name="config.entryTemplate"
-				class="hk-textarea hk-mono line"
-				rows="1"
+				class="hk-input hk-mono"
 				spellcheck="false"
+				autocomplete="off"
 				bind:value={values.entryTemplate}
-				aria-invalid={!!errorFor('entryTemplate') || undefined}></textarea>
+				aria-invalid={!!errorFor('entryTemplate') || undefined}
+			/>
 			<div class="tokens" aria-label="Insert">
 				{#each fieldOf('entryTemplate')?.tokens ?? [] as t (t)}
 					<button type="button" onclick={() => insert('entryTemplate', t)}
@@ -298,7 +313,7 @@
 		</div>
 
 		<fieldset class="f trig">
-			<legend class="hk-field-label">Takes</legend>
+			<legend class="hk-field-label">From</legend>
 			<div class="chips">
 				{#each triggers as t (t)}
 					<label class="tchip">
@@ -445,18 +460,20 @@
 		</details>
 	</form>
 	{#if !isNew}
-		<div class="actrow end">
+		<div class="srow">
+			<span class="srow-l">Remove {named ? note.name : 'daily note'}</span>
 			<ConfirmAction
 				action="/settings?/noteDelete"
 				fields={{ id: note.id ?? '' }}
-				label="Remove {named ? note.name : 'daily note'}"
-				title="Remove {note.name}"
+				label="Remove"
+				title="Remove {named ? note.name : 'daily note'}"
 				confirmLabel="Remove"
-				triggerClass="hk-btn-ghost hk-btn-sm danger"
+				triggerClass="hk-btn-secondary hk-btn-sm danger"
 			>
 				<p>{deleteLine}</p>
 			</ConfirmAction>
 		</div>
+		<SaveBar {dirty} keys={[key]} />
 	{/if}
 	{#if isNew}
 		<div class="actrow">
@@ -516,25 +533,18 @@
 		font-size: 0.75rem;
 		color: var(--hk-text-3);
 	}
-	.line {
-		min-height: 2.5rem;
-		resize: vertical;
-	}
 	.tls {
 		margin-top: 1rem;
 	}
 	.bad {
 		color: var(--hk-err);
 	}
-	.end {
-		justify-content: flex-end;
-		margin-top: 0.5rem;
-	}
-	.end :global(.danger) {
-		color: var(--hk-text-3);
-	}
-	.end :global(.danger:hover) {
+	.srow :global(.danger) {
 		color: var(--hk-err);
+	}
+	.since {
+		flex: none;
+		color: var(--hk-warn);
 	}
 	@media (max-width: 639.98px) {
 		.lv {

@@ -3,6 +3,7 @@
 import { and, asc, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 import { db } from './db/index.ts';
 import { deliveries, integrations, recordings, webhookEvents } from './db/schema.ts';
+import { obsidianVault } from './integrations/env.ts';
 import { listIntegrations } from './integrations/index.ts';
 import { obsidianConfig, readNote } from './integrations/obsidian.ts';
 import { onChange } from './pipeline.ts';
@@ -57,8 +58,11 @@ export function notePathFor(integration: Integration, key: string, timeZone: str
 }
 
 /** obsidian:// link that opens a vault path */
-export const obsidianLink = (path: string) =>
-	`obsidian://open?file=${encodeURIComponent(path.replace(/\.md$/i, ''))}`;
+export function obsidianLink(path: string) {
+	const vault = obsidianVault();
+	const file = encodeURIComponent(path.replace(/\.md$/i, ''));
+	return `obsidian://open?${vault ? `vault=${encodeURIComponent(vault)}&` : ''}file=${file}`;
+}
 
 // Note reads, shared for a few seconds and dropped whenever a recording changes, so the sheet a
 // live refresh loads shows the line a delivery just wrote
@@ -229,6 +233,33 @@ export async function ringClient(recordingId: string) {
 	return row?.userAgent ?? null;
 }
 
+/** Month shown in the calendar: `month` (YYYY-MM) when valid, else the month of `key` */
+function monthOf(key: string, month: string | null) {
+	const shown = month && /^\d{4}-\d{2}$/.test(month) ? month : key.slice(0, 7);
+	const [y, m] = shown.split('-').map(Number);
+	return {
+		month: shown,
+		nextMonth: new Date(Date.UTC(y!, m!, 1)).toISOString().slice(0, 7),
+		prevMonth: new Date(Date.UTC(y!, m! - 2, 1)).toISOString().slice(0, 7)
+	};
+}
+
+/** The side rail of pages that are not a day: the calendar with `key` picked, and failures elsewhere */
+export async function loadRail(key: string | null, timeZone: string, month: string | null) {
+	const today = dayKey(new Date(), timeZone);
+	const m = monthOf(key ?? today, month);
+	// No day picked: every failure counts
+	const start = key ? dayStart(key, timeZone) : new Date(0);
+	const end = key ? dayStart(addDays(key, 1), timeZone) : new Date(0);
+	const [dots, needs] = await Promise.all([
+		dayDots(dayStart(`${m.month}-01`, timeZone), dayStart(`${m.nextMonth}-01`, timeZone), timeZone),
+		notInNote(start, end)
+	]);
+	return { day: key, today, calendar: { ...m, dots }, needs };
+}
+
+export type RailData = Awaited<ReturnType<typeof loadRail>>;
+
 /** The day sheet for `key` (YYYY-MM-DD) in `timeZone` */
 export async function loadDay(key: string, timeZone: string, month: string | null) {
 	const today = dayKey(new Date(), timeZone);
@@ -237,11 +268,8 @@ export async function loadDay(key: string, timeZone: string, month: string | nul
 
 	// Calendar month shown, and the week strip: seven days ending at the day, or later when
 	// the day is in the past so it does not sit at the edge
-	const shownMonth = month && /^\d{4}-\d{2}$/.test(month) ? month : key.slice(0, 7);
+	const { month: shownMonth, nextMonth, prevMonth } = monthOf(key, month);
 	const monthStart = `${shownMonth}-01`;
-	const [my, mm] = shownMonth.split('-').map(Number);
-	const nextMonth = new Date(Date.UTC(my!, mm!, 1)).toISOString().slice(0, 7);
-	const prevMonth = new Date(Date.UTC(my!, mm! - 2, 1)).toISOString().slice(0, 7);
 	let weekEnd = addDays(key, 3);
 	if (weekEnd > today) weekEnd = today;
 	if (weekEnd < key) weekEnd = key;

@@ -74,6 +74,12 @@
 </dialog>
 
 <style>
+	/* A dialog opened from inside a mono field still reads in the body face */
+	dialog {
+		font-family: var(--hk-font-sans);
+		letter-spacing: normal;
+		white-space: normal;
+	}
 	.x {
 		display: inline-flex;
 		align-items: center;

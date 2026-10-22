@@ -3,6 +3,7 @@
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import Icon from './Icon.svelte';
+	import SaveBar from './SaveBar.svelte';
 	import SecretField from './SecretField.svelte';
 	import Switch from './Switch.svelte';
 	import TestResult from './TestResult.svelte';
@@ -105,13 +106,6 @@
 	const modelOf = (id: string) =>
 		(id === 'openai' ? s.openai.model : id === 'openai-audio' ? s.openaiAudio.model : '') ||
 		(t.providers.find((p) => p.id === id)?.defaultModel ?? '');
-	const keyEnv = $derived(
-		t.envLocks.openaiKey &&
-			((s.provider === 'openai' && !t.keysSet.openai && isOpenAI(s.openai.baseUrl)) ||
-				(s.provider === 'openai-audio' &&
-					!t.keysSet.openaiAudio &&
-					isOpenAI(s.openaiAudio.baseUrl)))
-	);
 	const ready = $derived(t.ready[s.provider] ?? null);
 
 	// Languages: chips, and a box that takes a name or a code
@@ -171,6 +165,26 @@
 		await tick();
 		langBox?.focus();
 	}
+	// Suggestions under the box: common languages not picked yet that match what is typed
+	const suggestions = $derived.by(() => {
+		const v = langInput.trim().toLowerCase();
+		return COMMON.filter((c) => !languages.includes(c))
+			.filter((c) => !v || c.startsWith(v) || languageName(c).toLowerCase().includes(v))
+			.slice(0, 8);
+	});
+	let active = $state(0);
+	$effect(() => {
+		if (active >= suggestions.length) active = 0;
+	});
+	async function pick(code: string) {
+		langInput = code;
+		await addLanguage();
+	}
+	function closeAdding() {
+		adding = false;
+		langInput = '';
+		langError = '';
+	}
 	const described = (k: string) => (errors[k] ? `${k.replace('.', '-')}-error` : undefined);
 </script>
 
@@ -205,32 +219,62 @@
 					</span>
 				{/each}
 				{#if adding}
-					<input
-						bind:this={langBox}
-						class="hk-input lang-in"
-						list="lang-names"
-						placeholder="Language"
-						autocomplete="off"
-						spellcheck="false"
-						bind:value={langInput}
-						aria-label="Add language"
-						aria-invalid={!!(langError || errors.languages) || undefined}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') {
-								e.preventDefault();
-								addLanguage();
-							} else if (e.key === 'Escape') {
-								adding = false;
-								langInput = '';
-							}
-						}}
-						onblur={() => langInput.trim() && addLanguage()}
-					/>
-					<datalist id="lang-names">
-						{#each COMMON.filter((c) => !languages.includes(c)) as c (c)}
-							<option value={languageName(c)}>{c}</option>
-						{/each}
-					</datalist>
+					<span class="combo">
+						<input
+							bind:this={langBox}
+							class="lang lang-in"
+							placeholder="Language or code"
+							autocomplete="off"
+							spellcheck="false"
+							role="combobox"
+							aria-expanded={suggestions.length > 0}
+							aria-controls="lang-list"
+							aria-activedescendant={suggestions[active]
+								? `lang-${suggestions[active]}`
+								: undefined}
+							bind:value={langInput}
+							aria-label="Add language"
+							aria-invalid={!!(langError || errors.languages) || undefined}
+							oninput={() => (active = 0)}
+							onkeydown={(e) => {
+								if (e.key === 'ArrowDown') {
+									e.preventDefault();
+									active = Math.min(suggestions.length - 1, active + 1);
+								} else if (e.key === 'ArrowUp') {
+									e.preventDefault();
+									active = Math.max(0, active - 1);
+								} else if (e.key === 'Enter') {
+									e.preventDefault();
+									const hit = suggestions[active];
+									if (hit && langInput.trim() && !isLanguageCode(langInput.trim().toLowerCase()))
+										pick(hit);
+									else if (!langInput.trim() && hit) pick(hit);
+									else addLanguage();
+								} else if (e.key === 'Escape') {
+									closeAdding();
+								}
+							}}
+							onblur={() => (langInput.trim() ? addLanguage() : closeAdding())}
+						/>
+						{#if suggestions.length}
+							<ul class="combo-pop" id="lang-list" role="listbox" aria-label="Languages">
+								{#each suggestions as c, i (c)}
+									<li
+										id="lang-{c}"
+										role="option"
+										aria-selected={i === active}
+										class:on={i === active}
+										onpointerdown={(e) => {
+											e.preventDefault();
+											pick(c);
+										}}
+									>
+										{languageName(c)}<span class="code">{c}</span>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</span>
 				{:else}
 					<button type="button" class="lang--add lang" onclick={startAdding}
 						><Icon name="plus" size={12} />{languages.length
@@ -257,7 +301,11 @@
 		<div class="srow srow--top">
 			<span class="srow-l">Model</span>
 			<span class="srow-v">
-				<span><span class="plabel">{current?.label ?? s.provider}</span> {modelOf(s.provider)}</span
+				<span class="mval"
+					><span class="plabel">{current?.label ?? s.provider}</span><span
+						class="msep"
+						aria-hidden="true">·</span
+					>{modelOf(s.provider)}</span
 				>
 				{#if ready === 'lost'}
 					<span class="from err"
@@ -265,11 +313,12 @@
 					>
 				{:else if ready === 'missing'}
 					<span class="from"><span class="dot warn" aria-hidden="true"></span>No key</span>
-				{:else if keyEnv}
-					<span class="from"><Icon name="lock" size={12} />OPENAI_API_KEY</span>
 				{/if}
-				<button type="button" class="linkbtn" aria-expanded={open} onclick={() => (open = !open)}
-					>{open ? 'Done' : 'Change'}</button
+				<button
+					type="button"
+					class="hk-btn-secondary hk-btn-sm"
+					aria-expanded={open}
+					onclick={() => (open = !open)}>{open ? 'Done' : 'Change'}</button
 				>
 			</span>
 		</div>
@@ -307,7 +356,7 @@
 						{@render err('openai.baseUrl')}
 					</div>
 					<div class="f">
-						<label class="hk-field-label" for="openai-model">Model</label>
+						<label class="hk-field-label" for="openai-model">Model name</label>
 						<input
 							id="openai-model"
 							name="openai.model"
@@ -353,7 +402,7 @@
 						{@render err('openaiAudio.baseUrl')}
 					</div>
 					<div class="f">
-						<label class="hk-field-label" for="audio-model">Model</label>
+						<label class="hk-field-label" for="audio-model">Model name</label>
 						<input
 							id="audio-model"
 							name="openaiAudio.model"
@@ -405,7 +454,7 @@
 					class="hk-btn-secondary hk-btn-sm"
 					formaction="/settings?/transcriptionTest"
 					disabled={!!busy}
-					aria-busy={busy === 'test'}>{busy === 'test' ? 'Testing…' : 'Test'}</button
+					aria-busy={busy === 'test'}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button
 				>
 				<span class="result" role="status">
 					{#if !busy && test && (test.ok || !test.field)}
@@ -426,6 +475,7 @@
 			/>
 		</div>
 	</form>
+	<SaveBar {dirty} keys={['transcription']} />
 </section>
 
 <style>
@@ -458,9 +508,89 @@
 	.err {
 		color: var(--hk-err);
 	}
+	.mval {
+		color: var(--hk-text);
+	}
+	.plabel {
+		color: var(--hk-text-3);
+	}
+	.msep {
+		margin: 0 0.375rem;
+		color: var(--hk-text-4);
+	}
+	.hk-option input {
+		appearance: none;
+		flex: none;
+		width: 1rem;
+		height: 1rem;
+		margin: 0;
+		border-radius: 99px;
+		box-shadow: inset 0 0 0 1.5px var(--hk-border-strong);
+		background: var(--hk-surface);
+		transition: box-shadow var(--hk-dur-fast) var(--hk-ease);
+	}
+	.hk-option input:checked {
+		box-shadow: inset 0 0 0 5px var(--hk-text);
+	}
+	.hk-option input:focus-visible {
+		outline: none;
+	}
+	.combo {
+		position: relative;
+		display: inline-flex;
+	}
+	.lang-in {
+		width: 11rem;
+		padding: 0 0.75rem;
+		font: inherit;
+		font-size: 0.8125rem;
+		font-weight: 400;
+		outline: none;
+	}
+	.lang-in:focus {
+		border-color: var(--hk-text-3);
+	}
+	.lang-in[aria-invalid='true'] {
+		border-color: var(--hk-err);
+	}
+	.combo-pop {
+		position: absolute;
+		top: calc(100% + 0.375rem);
+		left: 0;
+		z-index: 10;
+		min-width: 13rem;
+		max-height: 16rem;
+		overflow-y: auto;
+		margin: 0;
+		padding: 0.25rem;
+		list-style: none;
+		border-radius: var(--hk-radius);
+		background: var(--hk-surface);
+		box-shadow: var(--hk-shadow-pop);
+	}
+	.combo-pop li {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		height: 2rem;
+		padding: 0 0.625rem;
+		border-radius: var(--hk-radius-6);
+		font-size: 0.8125rem;
+		color: var(--hk-text);
+		cursor: pointer;
+	}
+	.combo-pop li.on {
+		background: var(--hk-hover);
+	}
+	.code {
+		font-family: var(--hk-font-mono);
+		font-size: 0.75rem;
+		color: var(--hk-text-3);
+	}
 	@media (max-width: 639.98px) {
 		.plabel,
-		.srow-v :global(.from) {
+		.msep {
 			display: none;
 		}
 	}

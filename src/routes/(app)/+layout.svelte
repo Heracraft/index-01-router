@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { enhance } from '$app/forms';
 	import { goto, refreshAll } from '$app/navigation';
+	import BrandMark from '#lib/components/BrandMark.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import { live } from '#lib/components/live.svelte.ts';
 	import type { LayoutProps } from './$types';
@@ -108,7 +109,7 @@
 		};
 	});
 
-	// Upload from the header: pick a file, post it, open the new recording
+	// Upload from the header: pick a file, post it, show it in its day
 	let fileInput = $state<HTMLInputElement>();
 	let uploadForm = $state<HTMLFormElement>();
 	let uploading = $state(false);
@@ -135,23 +136,7 @@
 <header class="top">
 	<div class="top-in">
 		<a class="brand" href={resolve('/(app)')}>
-			<svg class="mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"
-				><rect width="32" height="32" rx="7" fill="#09090b" /><rect
-					x="7"
-					y="12"
-					width="4"
-					height="8"
-					rx="1.5"
-					fill="#3f3f46"
-				/><rect x="14" y="8" width="4" height="16" rx="1.5" fill="#3f3f46" /><rect
-					x="21"
-					y="11"
-					width="4"
-					height="10"
-					rx="1.5"
-					fill="#60a5fa"
-				/></svg
-			>
+			<BrandMark />
 			<span class="wordmark">Index 01</span>
 		</a>
 		<div class="top-act">
@@ -165,7 +150,7 @@
 				class:is-cur={onSearch}
 				href={resolve('/(app)/recordings')}
 				aria-label="Search"
-				title="Search"><Icon name="search" /></a
+				title="Search"><Icon name="search" size={18} /></a
 			>
 			<form
 				bind:this={uploadForm}
@@ -179,7 +164,15 @@
 						uploading = false;
 						if (fileInput) fileInput.value = '';
 						if (result.type === 'success' && typeof result.data?.uploaded === 'string') {
-							await goto(resolve('/(app)/recordings/[id]', { id: result.data.uploaded }));
+							// Land on the day it belongs to, with its line marked
+							const day = String(result.data.day ?? '');
+							live.flash = result.data.uploaded;
+							await goto(
+								/^\d{4}-\d{2}-\d{2}$/.test(day) && day !== result.data.today
+									? resolve('/(app)/day/[date]', { date: day })
+									: resolve('/(app)'),
+								{ invalidateAll: true }
+							);
 						} else if (result.type === 'failure') {
 							uploadError = String(result.data?.upload ?? 'Upload failed');
 						} else await update();
@@ -204,7 +197,7 @@
 					title="Upload audio"
 					aria-busy={uploading}
 					disabled={uploading}
-					onclick={() => fileInput?.click()}><Icon name="upload" /></button
+					onclick={() => fileInput?.click()}><Icon name="upload" size={18} /></button
 				>
 			</form>
 			<a
@@ -212,7 +205,7 @@
 				class:is-cur={onSettings}
 				href={resolve('/(app)/settings')}
 				aria-label="Settings"
-				title="Settings"><Icon name="gear" /></a
+				title="Settings"><Icon name="gear" size={18} /></a
 			>
 		</div>
 	</div>
@@ -259,22 +252,11 @@
 {@render children()}
 
 <style>
-	.mark {
-		border-radius: 5px;
-	}
-	:global(:root[data-theme='dark']) .mark {
-		box-shadow: 0 0 0 1px var(--hk-border);
-	}
-	@media (prefers-color-scheme: dark) {
-		:global(:root:not([data-theme='light'])) .mark {
-			box-shadow: 0 0 0 1px var(--hk-border);
-		}
-	}
 	form {
 		display: contents;
 	}
 	.banners {
-		max-width: 66rem;
+		max-width: var(--page-max);
 		margin: 1rem auto 0;
 		padding: 0 1.25rem;
 	}

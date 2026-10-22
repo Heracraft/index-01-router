@@ -1,15 +1,16 @@
 <script lang="ts">
-	/* Timezone with the local time it gives, theme, and who is signed in */
-	import { onMount } from 'svelte';
+	/* Timezone, theme, and who is signed in */
+	import SaveBar from './SaveBar.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
-	import { formatDate } from '#lib/notes/time.ts';
+	import type { DirtyForms } from './dirty.svelte.ts';
 
 	interface Props {
-		general: { timezone: string; envTimezone: string | undefined; timeZones: string[] };
+		general: { timezone: string; timeZones: string[] };
 		email: string | null;
 		error?: string | null;
+		dirty: DirtyForms;
 	}
-	let { general, email, error = null }: Props = $props();
+	let { general, email, error = null, dirty }: Props = $props();
 
 	let zone = $state('');
 	let seen = '';
@@ -17,18 +18,6 @@
 		if (general.timezone === seen) return;
 		seen = general.timezone;
 		zone = general.timezone;
-	});
-	let now = $state(new Date());
-	onMount(() => {
-		const t = setInterval(() => (now = new Date()), 30_000);
-		return () => clearInterval(t);
-	});
-	const clock = $derived.by(() => {
-		try {
-			return formatDate(now, 'HH:mm', zone || 'UTC');
-		} catch {
-			return '';
-		}
 	});
 </script>
 
@@ -49,12 +38,9 @@
 				aria-invalid={!!error || undefined}
 			>
 				{#each general.timeZones as z (z)}
-					<option value={z}
-						>{z.replaceAll('_', ' ')}{z === general.envTimezone ? ' · TZ' : ''}</option
-					>
+					<option value={z}>{z.replaceAll('_', ' ')}</option>
 				{/each}
 			</select>
-			<span class="muted hk-num">{clock}</span>
 		</span>
 		{#if error}<p class="f-err full">{error}</p>{/if}
 	</div>
@@ -63,16 +49,25 @@
 		<span class="srow-v"><ThemeToggle /></span>
 	</div>
 	<div class="srow">
-		<span class="srow-l">{email ?? 'Signed in'}</span>
+		<span class="srow-l acct">Account<span class="muted">{email ?? 'Signed in'}</span></span>
 		<form method="POST" action="/auth/signout" class="srow-v">
 			<button class="hk-btn-ghost hk-btn-sm" name="everywhere" value="1">Sign out everywhere</button
 			>
 			<button class="hk-btn-secondary hk-btn-sm">Sign out</button>
 		</form>
 	</div>
+	<SaveBar {dirty} keys={['transcription']} when={zone !== general.timezone} />
 </section>
 
 <style>
+	.acct {
+		display: flex;
+		flex-direction: column;
+		line-height: 1.35;
+	}
+	.acct .muted {
+		font-size: 0.8125rem;
+	}
 	.full {
 		flex-basis: 100%;
 		text-align: right;
