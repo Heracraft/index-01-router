@@ -35,11 +35,11 @@ export interface IntegrationKind {
 	test(config: Record<string, unknown>): Promise<string>;
 }
 
+/** Plain field, not a parameter property: Node's type stripping rejects those */
 export class DeliverError extends Error {
-	constructor(
-		message: string,
-		readonly retryable: boolean
-	) {
+	readonly retryable: boolean;
+	constructor(message: string, retryable: boolean) {
 		super(message);
+		this.retryable = retryable;
 	}
 }

@@ -1,8 +1,7 @@
 import * as client from 'openid-client';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { error, redirect, type Cookies, type RequestEvent } from '@sveltejs/kit';
+import { error, redirect, type RequestEvent } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
-import { dev } from '$app/env';
 import {
 	OIDC_ISSUER,
 	OIDC_CLIENT_ID,
@@ -58,7 +57,13 @@ function verify<T>(token: string | undefined): T | null {
 	}
 }
 
-const cookieOpts = { path: '/', httpOnly: true, sameSite: 'lax' as const, secure: !dev };
+/** Secure follows the request protocol (PROTOCOL_HEADER behind a proxy), so plain http works too */
+const cookieOpts = (url: URL) => ({
+	path: '/',
+	httpOnly: true,
+	sameSite: 'lax' as const,
+	secure: url.protocol === 'https:'
+});
 
 /** Only same-origin relative paths survive the round trip */
 function safeNext(value: string | null | undefined) {
@@ -77,11 +82,10 @@ export async function signIn(event: RequestEvent): Promise<never> {
 	const code_challenge = await client.calculatePKCECodeChallenge(code_verifier);
 	const state = client.randomState();
 	const next = safeNext(event.url.searchParams.get('next'));
-	event.cookies.set(
-		FLOW_COOKIE,
-		sign({ code_verifier, state, next, exp: Date.now() + 600_000 }),
-		{ ...cookieOpts, maxAge: 600 }
-	);
+	event.cookies.set(FLOW_COOKIE, sign({ code_verifier, state, next, exp: Date.now() + 600_000 }), {
+		...cookieOpts(event.url),
+		maxAge: 600
+	});
 	const url = client.buildAuthorizationUrl(config, {
 		redirect_uri: new URL('/auth/callback', event.url.origin).href,
 		scope: OIDC_SCOPES,
@@ -129,7 +133,7 @@ export async function callback(event: RequestEvent): Promise<never> {
 		redirect(303, '/auth/signin?error=denied');
 	}
 
-	setSession(event.cookies, {
+	setSession(event, {
 		sub: claims.sub,
 		email,
 		name,
@@ -138,8 +142,11 @@ export async function callback(event: RequestEvent): Promise<never> {
 	redirect(303, safeNext(flow.next));
 }
 
-function setSession(cookies: Cookies, s: Session) {
-	cookies.set(SESSION_COOKIE, sign(s), { ...cookieOpts, maxAge: SESSION_DAYS * 86400 });
+function setSession(event: RequestEvent, s: Session) {
+	event.cookies.set(SESSION_COOKIE, sign(s), {
+		...cookieOpts(event.url),
+		maxAge: SESSION_DAYS * 86400
+	});
 }
 
 export function signOut(event: RequestEvent): never {

@@ -1,0 +1,64 @@
+# Development services with published ports. The app itself runs on the host with `pnpm dev`.
+#   pnpm db:up                                   Postgres + mock OIDC
+#   docker compose -f compose.dev.yaml --profile obsidian up -d
+#   docker compose -f compose.dev.yaml --profile whisper up -d
+name: index-01-router
+
+services:
+  # postgres://root:pebble@localhost:5432/local
+  db:
+    image: postgres
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: pebble
+      POSTGRES_DB: local
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+  # Issuer http://localhost:8090/default, any client id, interactive login takes any username
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+    ports:
+      - 8090:8080
+
+  # MCP URL http://localhost:27123/mcp/, key devkey. Vault: ./data/vault, create it first (pnpm obsidian:up does)
+  obsidian-rest:
+    image: ghcr.io/heracraft/obsidian-remote-rest-api:latest
+    profiles: [obsidian]
+    user: '${UID:-1000}:${GID:-1000}'
+    ports:
+      - 127.0.0.1:27123:27123
+    environment:
+      API_KEY: ${OBSIDIAN_API_KEY:-devkey}
+      ENABLE_INSECURE_SERVER: 'true'
+      DATA_DIR: /data
+    volumes:
+      - ./data/vault:/vault
+    tmpfs:
+      - /data:uid=${UID:-1000},gid=${GID:-1000}
+
+  # URL http://localhost:8080
+  whisper:
+    image: ghcr.io/ggml-org/whisper.cpp:main
+    profiles: [whisper]
+    entrypoint: ['bash', '-c']
+    command:
+      - >-
+        set -e;
+        m=/models/ggml-$${WHISPER_MODEL}.bin;
+        [ -s "$$m" ] || /app/models/download-ggml-model.sh "$${WHISPER_MODEL}" /models;
+        exec whisper-server --host 0.0.0.0 --port 8080 -t "$${WHISPER_THREADS}" -m "$$m"
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_THREADS: ${WHISPER_THREADS:-4}
+    ports:
+      - 127.0.0.1:8080:8080
+    volumes:
+      - whisper-models:/models
+
+volumes:
+  pgdata:
+  whisper-models:

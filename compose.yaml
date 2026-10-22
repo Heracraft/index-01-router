@@ -1,14 +1,94 @@
+# Production stack, written for Coolify (Docker Compose build pack). Plain docker compose works
+# too: put the variables below in a .env file next to this one.
+#
+# SERVICE_* names are Coolify magic variables, generated on the first deploy and shown under
+# Environment Variables: https://coolify.io/docs/knowledge-base/docker/compose
+#
+# Optional sidecars are compose profiles. Enable them with COMPOSE_PROFILES=obsidian,whisper.
+
 services:
-  db:
-    image: postgres
-    restart: always
-    ports:
-      - 5432:5432
+  app:
+    build: .
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: pebble
-      POSTGRES_DB: local
+      # Coolify routes this service's domain to port 3000
+      - SERVICE_URL_APP_3000
+      - PUBLIC_URL=${SERVICE_URL_APP:-}
+      - DATABASE_URL=postgres://${SERVICE_USER_POSTGRES}:${SERVICE_PASSWORD_POSTGRES}@db:5432/${POSTGRES_DB:-index01}
+      - AUTH_SECRET=${SERVICE_HEX_64_AUTHSECRET}
+      - OIDC_ISSUER=${OIDC_ISSUER:?}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:?}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-openid profile email}
+      - ALLOWED_EMAILS=${ALLOWED_EMAILS:-}
+      - INDEX01_WEBHOOK_SECRET=${INDEX01_WEBHOOK_SECRET:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - TZ=${TZ:-UTC}
+      - BODY_SIZE_LIMIT=${BODY_SIZE_LIMIT:-50M}
     volumes:
-      - pgdata:/var/lib/postgresql
+      - app-data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${SERVICE_USER_POSTGRES}
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      - POSTGRES_DB=${POSTGRES_DB:-index01}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Headless vault server with MCP. Integration URL: http://obsidian-rest:27123/mcp/
+  obsidian-rest:
+    image: ghcr.io/heracraft/obsidian-remote-rest-api:latest
+    profiles: [obsidian]
+    restart: unless-stopped
+    user: '1000:1000'
+    environment:
+      - API_KEY=${OBSIDIAN_API_KEY:-}
+      - ENABLE_INSECURE_SERVER=true
+      - DATA_DIR=/data
+    volumes:
+      # Sync your vault into this volume (Obsidian Sync, Syncthing, git), or bind mount a folder
+      - vault:/vault
+      - obsidian-data:/data
+
+  # whisper.cpp on the CPU. Transcription URL: http://whisper:8080. Downloads the model on first start
+  whisper:
+    image: ghcr.io/ggml-org/whisper.cpp:main
+    profiles: [whisper]
+    restart: unless-stopped
+    entrypoint: ['bash', '-c']
+    command:
+      - >-
+        set -e;
+        m=/models/ggml-$${WHISPER_MODEL}.bin;
+        [ -s "$$m" ] || /app/models/download-ggml-model.sh "$${WHISPER_MODEL}" /models;
+        exec whisper-server --host 0.0.0.0 --port 8080 -t "$${WHISPER_THREADS}" -m "$$m"
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - WHISPER_THREADS=${WHISPER_THREADS:-4}
+    volumes:
+      - whisper-models:/models
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8080/health']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 600s
+
 volumes:
-  pgdata:
+  app-data:
+  pg-data:
+  vault:
+  obsidian-data:
+  whisper-models:

@@ -1,3 +1,43 @@
 @import 'tailwindcss';
-@plugin '@tailwindcss/forms';
+@import '../lib/styles/hk-tokens.css' layer(components);
 @plugin '@tailwindcss/typography';
+
+/* dark: matches an explicit Dark choice only. Components read --hk-* tokens, which also follow the OS */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@theme inline {
+	--color-hk-bg: var(--hk-bg);
+	--color-hk-surface: var(--hk-surface);
+	--color-hk-surface-2: var(--hk-surface-2);
+	--color-hk-hairline: var(--hk-hairline);
+	--color-hk-border: var(--hk-border);
+	--color-hk-border-strong: var(--hk-border-strong);
+	--color-hk-text: var(--hk-text);
+	--color-hk-text-2: var(--hk-text-2);
+	--color-hk-text-3: var(--hk-text-3);
+	--color-hk-text-4: var(--hk-text-4);
+	--color-hk-accent: var(--hk-accent);
+	--color-hk-ok: var(--hk-ok);
+	--color-hk-warn: var(--hk-warn);
+	--color-hk-err: var(--hk-err);
+	--font-display: var(--hk-font-display);
+	--font-sans: var(--hk-font-sans);
+	--font-mono: var(--hk-font-mono);
+	--ease-hk: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@layer components {
+	/* Busy pipeline dot: the kit's phone-flow "busy" state, ink with a 1.6s pulse */
+	.hk .hk-dot--busy {
+		background: var(--hk-text);
+		animation: hk-pulse 1.6s ease-in-out infinite;
+	}
+	.hk .hk-dot--done {
+		background: var(--hk-text-2);
+	}
+	/* .hk-input sets font: inherit after the kit's mono rule; ids, URLs and templates stay mono */
+	.hk :is(.hk-input, .hk-textarea).hk-mono {
+		font-family: var(--hk-font-mono);
+		font-size: 0.8125rem;
+	}
+}

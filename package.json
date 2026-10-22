@@ -4,7 +4,7 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "docker compose up -d && vite dev",
+		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
@@ -14,11 +14,15 @@
 		"format": "prettier --write .",
 		"test:unit": "vitest",
 		"test": "npm run test:unit -- --run",
-		"db:start": "docker compose up",
 		"db:push": "drizzle-kit push",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "drizzle-kit migrate",
-		"db:studio": "drizzle-kit studio"
+		"db:studio": "drizzle-kit studio",
+		"db:up": "docker compose -f compose.dev.yaml up -d",
+		"db:down": "docker compose -f compose.dev.yaml down",
+		"obsidian:up": "mkdir -p data/vault && docker compose -f compose.dev.yaml --profile obsidian up -d obsidian-rest",
+		"whisper:up": "docker compose -f compose.dev.yaml --profile whisper up -d whisper",
+		"docker:build": "docker build -t index-01-router ."
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

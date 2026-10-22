@@ -112,19 +112,33 @@ export const envLocks = {
 	geminiKey: !!GEMINI_API_KEY
 };
 
+const isOpenAI = (url: string) => {
+	try {
+		return /(^|\.)openai\.com$/.test(new URL(url).hostname);
+	} catch {
+		return false;
+	}
+};
+
+/** Blank keys fall back to OPENAI_API_KEY (for openai.com base URLs) and GEMINI_API_KEY */
+export function withEnvKeys(t: TranscriptionSettings): TranscriptionSettings {
+	const s = structuredClone(t);
+	if (!s.openai.apiKey && OPENAI_API_KEY && isOpenAI(s.openai.baseUrl)) {
+		s.openai.apiKey = OPENAI_API_KEY;
+	}
+	if (!s.openaiAudio.apiKey && OPENAI_API_KEY && isOpenAI(s.openaiAudio.baseUrl)) {
+		s.openaiAudio.apiKey = OPENAI_API_KEY;
+	}
+	if (!s.gemini.apiKey && GEMINI_API_KEY) s.gemini.apiKey = GEMINI_API_KEY;
+	return s;
+}
+
 /** Effective settings: stored values with env fallbacks applied */
 export async function getSettings<K extends keyof Shapes>(key: K): Promise<Shapes[K]> {
 	const value = await getStored(key);
 	if (key === 'webhook' && INDEX01_WEBHOOK_SECRET) {
 		(value as WebhookSettings).secret = INDEX01_WEBHOOK_SECRET;
 	}
-	if (key === 'transcription') {
-		const t = value as TranscriptionSettings;
-		const isOpenAI = (url: string) => /(^|\.)openai\.com/.test(new URL(url).hostname);
-		if (!t.openai.apiKey && OPENAI_API_KEY && isOpenAI(t.openai.baseUrl)) t.openai.apiKey = OPENAI_API_KEY;
-		if (!t.openaiAudio.apiKey && OPENAI_API_KEY && isOpenAI(t.openaiAudio.baseUrl))
-			t.openaiAudio.apiKey = OPENAI_API_KEY;
-		if (!t.gemini.apiKey && GEMINI_API_KEY) t.gemini.apiKey = GEMINI_API_KEY;
-	}
+	if (key === 'transcription') return withEnvKeys(value as TranscriptionSettings) as Shapes[K];
 	return value;
 }

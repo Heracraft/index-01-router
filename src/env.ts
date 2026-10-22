@@ -41,14 +41,16 @@ export const variables = defineEnvVars({
 		schema: (value) => value || 'openid profile email'
 	},
 	ALLOWED_EMAILS: {
-		description: 'Comma separated emails allowed to sign in. Empty allows any account of the issuer',
+		description:
+			'Comma separated emails allowed to sign in. Empty allows any account of the issuer',
 		schema: list
 	},
 	AUTH_SECRET: {
 		description: 'Signs cookies and encrypts stored API keys. openssl rand -hex 32',
 		schema: (value) => {
 			if (building) return value ?? '';
-			if (!value || value.length < 32) throw new Error('AUTH_SECRET must be at least 32 characters');
+			if (!value || value.length < 32)
+				throw new Error('AUTH_SECRET must be at least 32 characters');
 			return value;
 		}
 	},

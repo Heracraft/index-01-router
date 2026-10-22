@@ -21,7 +21,11 @@ const isPublic = (path: string) => PUBLIC.some((p) => path === p || path.startsW
  */
 const originHandle: Handle = async ({ event, resolve }) => {
 	const { request, url } = event;
-	if (request.method !== 'GET' && request.method !== 'HEAD' && !url.pathname.startsWith('/api/index01/webhook')) {
+	if (
+		request.method !== 'GET' &&
+		request.method !== 'HEAD' &&
+		!url.pathname.startsWith('/api/index01/webhook')
+	) {
 		const origin = request.headers.get('origin');
 		if (origin !== url.origin) error(403, 'Cross-site requests are forbidden');
 	}
@@ -31,7 +35,10 @@ const originHandle: Handle = async ({ event, resolve }) => {
 const authorizationHandle: Handle = async ({ event, resolve }) => {
 	if (!isPublic(event.url.pathname) && !event.locals.session) {
 		if (event.request.method === 'GET' && !event.isRemoteRequest && !event.isDataRequest) {
-			redirect(303, `/auth/signin?next=${encodeURIComponent(event.url.pathname + event.url.search)}`);
+			redirect(
+				303,
+				`/auth/signin?next=${encodeURIComponent(event.url.pathname + event.url.search)}`
+			);
 		}
 		error(401, 'Sign in first');
 	}

@@ -20,4 +20,5 @@ export function decrypt(value: string): string {
 	return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8');
 }
 
-export const isEncrypted = (value: unknown) => typeof value === 'string' && value.startsWith(PREFIX);
+export const isEncrypted = (value: unknown) =>
+	typeof value === 'string' && value.startsWith(PREFIX);
