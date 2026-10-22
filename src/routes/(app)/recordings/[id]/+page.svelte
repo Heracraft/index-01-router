@@ -286,8 +286,8 @@
 		<!-- No words, no line: a failed transcription shows only the note it was meant for -->
 		{#each hasTranscript || st.kind === 'failed' ? data.contexts : [] as c (c.integrationId)}
 			<!-- The line between its neighbours: marked where it landed, dashed where it would.
-			     Nothing else in the section: the note's path is enough. The line itself reads in
-			     full, its neighbours one line each -->
+			     Nothing else in the section: the note's path is enough. The transcript is printed
+			     above, so the line takes two lines here and its neighbours one each -->
 			<section class="sec" aria-label={sectionTitle(c)}>
 				<h2 class="sec-h">{sectionTitle(c)}</h2>
 				<article class="sheet sheet--sm">
@@ -321,7 +321,7 @@
 									>
 										<span class="e-t">{l.time ?? ''}</span>
 										<div class="e-b">
-											<p class="e-x" class:clamp1={!l.mark}>
+											<p class="e-x" class:clamp1={!l.mark} class:clamp2={!!l.mark}>
 												{#if l.task !== null}<span class="task" class:on={l.task}
 													></span>{/if}{l.text}
 											</p>
