@@ -18,7 +18,7 @@
 		};
 		needs: { recs: EntryRec[]; count: number };
 		tz: string;
-		/** Recording open on this page, left out of the list */
+		/** Recording open on this page, marked in the list */
 		current?: string;
 	}
 	let { day, today, calendar, needs, tz, current }: Props = $props();
@@ -31,7 +31,7 @@
 		const s = entryState(rec);
 		return s.kind === 'failed' ? s.cause : 'Failed';
 	};
-	const recs = $derived(needs.recs.filter((r) => r.id !== current));
+	const recs = $derived(needs.recs);
 </script>
 
 <aside class="rail">
@@ -47,7 +47,11 @@
 		<div class="needs">
 			<h2 class="rail-h">Not in a note</h2>
 			{#each recs as r (r.id)}
-				<a href={resolve('/(app)/recordings/[id]', { id: r.id })} class="need"
+				<a
+					href={resolve('/(app)/recordings/[id]', { id: r.id })}
+					class="need"
+					class:cur={r.id === current}
+					aria-current={r.id === current ? 'page' : undefined}
 					><span class="need-d">{when(r.recordedAt)}</span><span class="need-r">{cause(r)}</span></a
 				>
 			{/each}

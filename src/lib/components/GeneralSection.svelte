@@ -1,5 +1,6 @@
 <script lang="ts">
 	/* Timezone, theme, and who is signed in */
+	import Modal from './Modal.svelte';
 	import SaveBar from './SaveBar.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
 	import type { DirtyForms } from './dirty.svelte.ts';
@@ -13,6 +14,7 @@
 	let { general, email, error = null, dirty }: Props = $props();
 
 	let zone = $state('');
+	let leaving = $state(false);
 	let seen = '';
 	$effect.pre(() => {
 		if (general.timezone === seen) return;
@@ -49,24 +51,30 @@
 		<span class="srow-v"><ThemeToggle /></span>
 	</div>
 	<div class="srow">
-		<span class="srow-l acct">Account<span class="muted">{email ?? 'Signed in'}</span></span>
-		<form method="POST" action="/auth/signout" class="srow-v">
-			<button class="hk-btn-ghost hk-btn-sm" name="everywhere" value="1">Sign out everywhere</button
+		<span class="srow-l">Account</span>
+		<span class="srow-v">
+			<span class="muted">{email ?? 'Signed in'}</span>
+			<button type="button" class="hk-btn-secondary hk-btn-sm" onclick={() => (leaving = true)}
+				>Sign out</button
 			>
-			<button class="hk-btn-secondary hk-btn-sm">Sign out</button>
-		</form>
+		</span>
 	</div>
+	<Modal bind:open={leaving} title="Sign out" size="sm">
+		<p>{email ?? 'This account'}</p>
+		{#snippet footer()}
+			<form method="POST" action="/auth/signout" class="out">
+				<button class="hk-btn-ghost" name="everywhere" value="1">Everywhere</button>
+				<button class="hk-btn">This device</button>
+			</form>
+		{/snippet}
+	</Modal>
 	<SaveBar {dirty} keys={['transcription']} when={zone !== general.timezone} />
 </section>
 
 <style>
-	.acct {
+	.out {
 		display: flex;
-		flex-direction: column;
-		line-height: 1.35;
-	}
-	.acct .muted {
-		font-size: 0.8125rem;
+		gap: 0.5rem;
 	}
 	.full {
 		flex-basis: 100%;

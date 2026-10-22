@@ -1,5 +1,6 @@
 <script lang="ts">
 	import BrandMark from '#lib/components/BrandMark.svelte';
+	import { seededBars } from '#lib/entry.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -9,6 +10,8 @@
 	const switching = $derived(error?.code === 'denied' || error?.code === 'unverified');
 	const label = $derived(!error ? 'Sign in' : switching ? 'Use another account' : 'Try again');
 	let busy = $state(false);
+	// The ring's waveform as the page's one picture
+	const bars = seededBars('index-01', 36);
 </script>
 
 <svelte:head>
@@ -18,9 +21,13 @@
 <main class="wrap">
 	<div class="card">
 		<p class="brand">
-			<BrandMark size={32} />
+			<BrandMark size={40} />
 			<span class="wordmark">Index 01</span>
 		</p>
+		<div class="sigwave" aria-hidden="true">
+			{#each bars as h, i (i)}<i style:height="{Math.round(h * h * 100)}%" class:on={i >= 30}
+				></i>{/each}
+		</div>
 		{#if error}
 			<p class="hk-banner hk-banner--err" role="alert">
 				{#if error.code === 'denied'}
@@ -62,26 +69,36 @@
 		flex-direction: column;
 		align-items: stretch;
 		width: 100%;
-		max-width: 22rem;
-		margin-top: -10vh;
-		padding: 2rem 1.75rem 1.75rem;
-		border: 1px solid var(--hk-border);
-		border-radius: var(--hk-radius-lg);
-		background: var(--hk-surface);
-		box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+		max-width: 20rem;
+		margin-top: -8vh;
+	}
+	.sigwave {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 3rem;
+		margin: 0 0 2.5rem;
+	}
+	.sigwave i {
+		flex: 0 0 3px;
+		border-radius: 2px;
+		background: var(--hk-border-strong);
+	}
+	.sigwave i.on {
+		background: var(--hk-accent);
 	}
 	.brand {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 0.75rem;
-		margin: 0 0 1.75rem;
+		gap: 0.875rem;
+		margin: 0 0 2rem;
 		white-space: nowrap;
 	}
 	.wordmark {
 		font-family: var(--hk-font-display);
-		font-size: 1.5rem;
-		line-height: 2rem;
+		font-size: 1.875rem;
+		line-height: 2.25rem;
 		font-weight: 600;
 		color: var(--hk-text);
 	}

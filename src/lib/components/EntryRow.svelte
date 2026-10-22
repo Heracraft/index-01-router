@@ -28,6 +28,10 @@
 	const showProgress = $derived(audio.id === rec.id && (audio.playing || audio.time > 0));
 
 	let open = $state(false);
+	/** A search hit shows whole, so you see why it matched */
+	const hit = $derived(
+		!!mark.trim() && (rec.transcript ?? '').toLowerCase().includes(mark.trim().toLowerCase())
+	);
 	let over = $state(false);
 	let pending = $state(false);
 	let retryError = $state<string | null>(null);
@@ -73,10 +77,10 @@
 </script>
 
 {#snippet text(t: string)}
-	<p class="e-x" class:clamped={!open} use:clamp>
+	<p class="e-x" class:clamped={!open && !hit} use:clamp>
 		{#each parts(t) as p, i (i)}{#if p.m}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
 	</p>
-	{#if over || open}
+	{#if !hit && (over || open)}
 		<button type="button" class="e-more" onclick={() => (open = !open)}
 			>{open ? 'Less' : 'More'}</button
 		>
@@ -180,7 +184,7 @@
 			{@render progress()}
 		{/if}
 	</div>
-	{#if rec.hasAudio}
+	{#if rec.hasAudio && rec.durationMs != null}
 		<PlayPill id={rec.id} durationMs={rec.durationMs} />
 	{/if}
 </li>

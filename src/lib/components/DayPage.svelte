@@ -54,6 +54,12 @@
 		{/if}
 		<div class="dayhead">
 			<h1 class="hk-h1-app dh-t">{title}</h1>
+			{#if data.note?.link}
+				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
+				<a class="hk-link open dh-open" href={data.note.link}
+					>Open in Obsidian <Icon name="external" size={14} /></a
+				>
+			{/if}
 			<nav class="dh-nav" aria-label="Days">
 				<a
 					class="hk-btn-ghost iconbtn"
@@ -68,14 +74,12 @@
 						aria-label={longDay(data.next)}
 						title={shortDay(data.next)}><Icon name="right" size={18} /></a
 					>
+				{:else}
+					<span class="hk-btn-ghost iconbtn" aria-disabled="true"
+						><Icon name="right" size={18} /></span
+					>
 				{/if}
 			</nav>
-			{#if data.note?.link}
-				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
-				<a class="hk-link open dh-open" href={data.note.link}
-					>Open in Obsidian <Icon name="external" size={14} /></a
-				>
-			{/if}
 		</div>
 
 		<article class="sheet sheet--day">
@@ -117,9 +121,5 @@
 				{/if}
 			</div>
 		</article>
-
-		<a class="prevday" href={resolve('/(app)/day/[date]', { date: data.prev })}
-			><Icon name="left" />{longDay(data.prev)}</a
-		>
 	</main>
 </div>

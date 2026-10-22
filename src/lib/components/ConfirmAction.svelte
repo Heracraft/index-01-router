@@ -29,7 +29,7 @@
 		confirmLabel = label,
 		fields = {},
 		triggerClass = 'hk-btn-danger',
-		confirmClass = 'hk-btn-danger',
+		confirmClass = 'hk-btn-danger solid',
 		disabled = false,
 		size = 'sm',
 		children

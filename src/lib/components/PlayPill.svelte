@@ -17,7 +17,6 @@
 	type="button"
 	class="pp"
 	class:on
-	class:pp--icon={!dur}
 	aria-label="{on ? 'Pause' : 'Play'}{dur ? ` ${dur}` : ''}"
 	aria-pressed={on}
 	onclick={() => {

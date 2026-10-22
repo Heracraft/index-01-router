@@ -1,6 +1,7 @@
 // One recording as a line in the day sheet: its state, its fix, and the exceptions worth a word.
 // Browser safe, shared by the day sheet, the search list and the recording page.
 import { deleteFixes, deliveryCause, rawError, transcribeCause } from './causes.ts';
+import { languageName } from './format.ts';
 
 export interface EntryDelivery {
 	id: string;
@@ -97,7 +98,7 @@ export function entryMeta(r: EntryRec): string[] {
 		!r.deliveries.some((d) => d.status === 'sent')
 	)
 		out.push('Not sent');
-	if (r.languages.length > 1) out.push(r.languages.join(' · '));
+	if (r.languages.length > 1) out.push(r.languages.map(languageName).join(', '));
 	return out;
 }
 

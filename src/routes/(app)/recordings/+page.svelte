@@ -4,6 +4,7 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import Rail from '#lib/components/Rail.svelte';
 	import { longDay, relativeDay } from '#lib/components/days.ts';
+	import { live } from '#lib/components/live.svelte.ts';
 	import { dayKey } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
@@ -30,6 +31,8 @@
 			}
 			g.rows.push(r);
 		}
+		// Days newest first; inside a day, the order the note reads
+		for (const g of out) g.rows.reverse();
 		return out;
 	});
 	const base = resolve('/(app)/recordings');
@@ -51,9 +54,10 @@
 	// Typing searches as you go: the GET form navigates, replacing the entry and keeping focus
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let searchForm = $state<HTMLFormElement>();
-	/** Focus on arrival when there is nothing typed yet: the search icon brought you here to type */
+	/** Focus only when the header's search icon brought you here to type */
 	function focusEmpty(node: HTMLInputElement) {
-		if (!node.value) node.focus();
+		if (live.find && !node.value) node.focus();
+		live.find = false;
 	}
 	function typed() {
 		clearTimeout(timer);
@@ -130,15 +134,11 @@
 						>{relativeDay(g.key, today) ?? longDay(g.key)}</a
 					>
 				</h2>
-				<div class="sheet">
-					<div class="sheet-body sheet-body--list">
-						<ul class="notes">
-							{#each g.rows as r (r.id)}
-								<EntryRow rec={r} {tz} mark={data.q} />
-							{/each}
-						</ul>
-					</div>
-				</div>
+				<ul class="notes">
+					{#each g.rows as r (r.id)}
+						<EntryRow rec={r} {tz} mark={data.q} />
+					{/each}
+				</ul>
 			</section>
 		{/each}
 
@@ -157,9 +157,6 @@
 </div>
 
 <style>
-	.sheet-body--list {
-		padding-block: 0.5rem;
-	}
 	.pager {
 		display: flex;
 		gap: 0.5rem;

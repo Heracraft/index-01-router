@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import SettingsNav from '#lib/components/SettingsNav.svelte';
-	import { dayKey, dayLabel, formatBytes, formatTime, triggerLabel } from '#lib/format.ts';
+	import { longDay, relativeDay } from '#lib/components/days.ts';
+	import { dayKey, formatBytes, formatTime, triggerLabel } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 	const tz = $derived(data.timezone);
+	const today = $derived(dayKey(new Date(), tz));
 
 	const groups = $derived.by(() => {
 		const out: { key: string; label: string; rows: typeof data.events }[] = [];
@@ -13,7 +15,7 @@
 			const key = dayKey(e.at, tz);
 			let g = out.at(-1);
 			if (!g || g.key !== key) {
-				g = { key, label: dayLabel(e.at, tz), rows: [] };
+				g = { key, label: relativeDay(key, today) ?? longDay(key), rows: [] };
 				out.push(g);
 			}
 			g.rows.push(e);
@@ -67,6 +69,8 @@
 				<ul class="rej log">
 					{#each g.rows as e (e.id)}
 						{@const bad = e.status >= 300}
+						{@const trig = e.trigger ? triggerLabel(e.trigger) : ''}
+						{@const res = resultOf(e) || (e.signed || e.test ? '' : 'Unsigned')}
 						<li class:link={!!e.recordingId}>
 							{#if e.recordingId}
 								<a class="r-t" href={resolve('/(app)/recordings/[id]', { id: e.recordingId })}
@@ -76,10 +80,9 @@
 								<span class="r-t">{formatTime(e.at, tz, true)}</span>
 							{/if}
 							<span class="what">
-								<span class="r-g">{triggerLabel(e.trigger)}</span>
-								<span class="r-m" class:bad
-									>{resultOf(e) || (e.signed || e.test ? '' : 'Unsigned')}</span
-								>
+								<!-- A rejected request has no trigger: its reason takes that column -->
+								<span class="r-g" class:bad={!trig && bad}>{trig || res}</span>
+								{#if trig && res !== trig}<span class="r-m" class:bad>{res}</span>{/if}
 							</span>
 							<span class="r-c">{e.status === 200 ? '' : e.status}</span>
 							<span class="r-s">{e.bytes ? formatBytes(e.bytes) : ''}</span>
@@ -95,7 +98,8 @@
 	.page-h {
 		margin: 0 0 1rem;
 	}
-	.bad {
+	.bad,
+	.r-g.bad {
 		color: var(--hk-err);
 	}
 	.what {
@@ -105,7 +109,7 @@
 	}
 	.r-g {
 		flex: none;
-		width: 6.5rem;
+		min-width: 6.5rem;
 		color: var(--hk-text-2);
 	}
 	.r-m {

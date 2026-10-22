@@ -36,3 +36,13 @@
 		>
 	</nav>
 </aside>
+
+<!-- Phone: the same sections as a row of chips under the header -->
+<nav class="snav-m" aria-label="Settings sections">
+	{#each items as s (s.id)}
+		<a href="{settings}#{s.id}" class:cur={current === s.id}
+			>{s.label}{#if s.tone}<span class="sdot {s.tone}" aria-hidden="true"></span>{/if}</a
+		>
+	{/each}
+	<a href={resolve('/(app)/settings/requests')} class:cur={current === 'requests'}>Requests</a>
+</nav>

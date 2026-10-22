@@ -134,6 +134,21 @@
 				: 'Sending to the note'
 	);
 	const lineCount = (text: string) => text.split('\n').length;
+	/** This recording's own line in the note: printed in full above, so two lines here at most,
+	   cut at a word with no stop before the ellipsis */
+	const short = (text: string, max = 150) => {
+		if (text.length <= max) return text;
+		const cut = text.slice(0, max).replace(/\s+\S*$/, '');
+		return `${cut.replace(/[\s.,;:!?]+$/, '')}…`;
+	};
+	const sectionTitle = (c: (typeof data.contexts)[number]) =>
+		data.contexts.length > 1
+			? c.name
+			: c.sent
+				? 'In the note'
+				: busy
+					? 'Going to the note'
+					: 'Not in the note';
 	const formError = $derived(form && 'error' in form && form.error ? form.error : null);
 </script>
 
@@ -267,10 +282,11 @@
 		</section>
 
 		{#each hasTranscript ? data.contexts : [] as c (c.integrationId)}
-			<section class="sec" aria-label={data.contexts.length > 1 ? c.name : 'In the note'}>
-				<h2 class="sec-h">{data.contexts.length > 1 ? c.name : 'In the note'}</h2>
+			{@const alone = c.sent && !c.before && !c.after && c.lines.length <= 1}
+			<section class="sec" aria-label={sectionTitle(c)}>
+				<h2 class="sec-h">{sectionTitle(c)}</h2>
 				<article class="sheet sheet--sm">
-					<div class="sheet-bar">
+					<div class="sheet-bar" class:sheet-bar--only={alone}>
 						<span class="path-s">
 							{#if c.sent}
 								<Icon name="check" size={14} class="ok-check" /><span class="hk-sr">Written to</span
@@ -278,9 +294,7 @@
 							{:else if busy}
 								<span class="spin" aria-hidden="true"></span><span class="hk-sr">Writing to</span>
 							{:else}
-								<span class="ring-warn" aria-hidden="true"></span><span class="hk-sr"
-									>Not written to</span
-								>
+								<span class="hk-sr">Not written to</span>
 							{/if}
 							<span class="path"
 								>{c.path ?? c.name}<span class="path-h">{` › ${c.heading}`}</span></span
@@ -291,27 +305,26 @@
 								>Open in Obsidian <Icon name="external" size={14} /></a
 							>{/if}
 					</div>
-					<div class="sheet-body">
-						<ul class="notes">
-							{#if c.before}<li class="ctx-gap" aria-hidden="true">…</li>{/if}
-							{#each c.lines as l, i (i)}
-								<li
-									class="e"
-									class:e--typed={!l.mark}
-									class:e--this={l.mark === 'this'}
-									class:e--pending={l.mark === 'pending'}
-								>
-									<span class="e-t">{l.time ?? ''}</span>
-									<div class="e-b">
-										<p class="e-x" class:clamp2={!!l.mark}>
-											{#if l.task !== null}<span class="task" class:on={l.task}></span>{/if}{l.text}
-										</p>
-									</div>
-								</li>
-							{/each}
-							{#if c.after}<li class="ctx-gap" aria-hidden="true">…</li>{/if}
-						</ul>
-					</div>
+					{#if !alone}<div class="sheet-body">
+							<ul class="notes">
+								{#each c.lines as l, i (i)}
+									<li
+										class="e"
+										class:e--typed={!l.mark}
+										class:e--this={l.mark === 'this'}
+										class:e--pending={l.mark === 'pending'}
+									>
+										<span class="e-t">{l.time ?? ''}</span>
+										<div class="e-b">
+											<p class="e-x" class:clamp2={!!l.mark}>
+												{#if l.task !== null}<span class="task" class:on={l.task}
+													></span>{/if}{l.mark ? short(l.text) : l.text}
+											</p>
+										</div>
+									</li>
+								{/each}
+							</ul>
+						</div>{/if}
 				</article>
 				{#each data.deliveries.filter((d) => d.integrationId === c.integrationId) as d (d.id)}
 					{#if d.status === 'sent' && d.stale}
@@ -504,18 +517,30 @@
 	.resend form {
 		display: contents;
 	}
+	.sheet-bar--only {
+		border-bottom: 0;
+	}
 	@media (max-width: 639.98px) {
-		.tacts :global(.copy.copy--labelled) {
-			height: 2.75rem !important;
+		.tacts :global(:is(.hk-btn-ghost, .copy.copy--labelled)) {
+			height: 2.75rem;
 		}
+	}
+	/* Edit, Copy and Share: one height, one icon size, one gap */
+	.tacts :global(:is(.hk-btn-ghost, .copy.copy--labelled)) {
+		height: 1.875rem;
+		padding: 0 0.625rem;
+		gap: 0.375rem;
+		font-size: 0.8125rem;
+		font-weight: 500;
 	}
 	.tacts :global(.copy.copy--labelled) {
 		background: transparent;
-		height: 1.75rem;
-		padding: 0 0.625rem;
 		border-color: transparent;
 		color: var(--hk-text-2);
-		font-size: 0.8125rem;
+	}
+	.tacts :global(.copy .ic) {
+		width: 14px;
+		height: 14px;
 	}
 	.tacts :global(.copy.copy--labelled:hover) {
 		background: var(--hk-hover);

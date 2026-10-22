@@ -71,14 +71,14 @@
 	{:else if env && !set && !replacing}
 		<div class="state">
 			<Icon name="lock" />
-			<span class="grow" {id}>From <span class="hk-mono">{env}</span></span>
+			<span class="grow" {id} title={env}>Set on the server</span>
 			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={replace}>Replace</button>
 		</div>
 	{:else if set && !replacing && !cleared}
 		<div class="state">
 			<span class="grow" {id}>
 				<Signal tone="ok" label="Stored" />
-				{#if env}<s class="hk-mono over" title="{env} not used">{env}</s>{/if}
+				{#if env}<s class="over" title="{env} not used">server value</s>{/if}
 			</span>
 			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={replace}>Replace</button>
 			{#if clearable}
@@ -93,7 +93,7 @@
 			<span class="after grow" {id}>
 				{#if env}
 					<Icon name="lock" />
-					<span>From <span class="hk-mono">{env}</span></span>
+					<span title={env}>Set on the server</span>
 				{:else}
 					<Signal tone="idle" label="Not set" />
 				{/if}
@@ -156,6 +156,7 @@
 	}
 	.over {
 		font-size: 0.8125rem;
+		text-decoration-thickness: 1px;
 		color: var(--hk-text-3);
 	}
 	.row {

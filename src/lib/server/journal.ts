@@ -186,10 +186,9 @@ export async function dayDots(from: Date, to: Date, timeZone: string) {
 	>;
 }
 
-/** Failed recordings outside [start, end), newest first, and how many there are */
-export async function notInNote(start: Date, end: Date, limit = 3) {
-	const outside = sql`(${recordings.recordedAt} < ${start.toISOString()}::timestamptz or ${recordings.recordedAt} >= ${end.toISOString()}::timestamptz)`;
-	const where = and(eq(recordings.status, 'failed'), outside);
+/** Failed recordings, newest first, and how many there are. The same count on every page */
+export async function notInNote(limit = 3) {
+	const where = eq(recordings.status, 'failed');
 	const [recs, [{ n } = { n: 0 }]] = await Promise.all([
 		entryRecs(where, limit),
 		db
@@ -248,12 +247,9 @@ function monthOf(key: string, month: string | null) {
 export async function loadRail(key: string | null, timeZone: string, month: string | null) {
 	const today = dayKey(new Date(), timeZone);
 	const m = monthOf(key ?? today, month);
-	// No day picked: every failure counts
-	const start = key ? dayStart(key, timeZone) : new Date(0);
-	const end = key ? dayStart(addDays(key, 1), timeZone) : new Date(0);
 	const [dots, needs] = await Promise.all([
 		dayDots(dayStart(`${m.month}-01`, timeZone), dayStart(`${m.nextMonth}-01`, timeZone), timeZone),
-		notInNote(start, end)
+		notInNote()
 	]);
 	return { day: key, today, calendar: { ...m, dots }, needs };
 }
@@ -281,7 +277,7 @@ export async function loadDay(key: string, timeZone: string, month: string | nul
 		entryRecs(and(gte(recordings.recordedAt, start), lt(recordings.recordedAt, end))),
 		sheetIntegration(),
 		dayDots(dayStart(from, timeZone), dayStart(to, timeZone), timeZone),
-		notInNote(start, end)
+		notInNote()
 	]);
 
 	const config = integration ? obsidianConfig(integration.config) : null;

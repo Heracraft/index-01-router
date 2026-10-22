@@ -301,7 +301,7 @@
 		<div class="srow srow--top">
 			<span class="srow-l">Model</span>
 			<span class="srow-v">
-				<span class="mval"
+				<span class="mval" hidden={open}
 					><span class="plabel">{current?.label ?? s.provider}</span><span
 						class="msep"
 						aria-hidden="true">·</span
@@ -332,7 +332,6 @@
 							<input type="radio" name="provider" value={p.id} bind:group={provider} />
 							<span class="opt">
 								<span>{p.label}</span>
-								<span class="hk-mono opt-model">{modelOf(p.id) || 'your server'}</span>
 							</span>
 						</label>
 					{/each}
@@ -500,10 +499,6 @@
 		justify-content: space-between;
 		gap: 1rem;
 		width: 100%;
-	}
-	.opt-model {
-		font-size: 0.75rem;
-		color: var(--hk-text-3);
 	}
 	.err {
 		color: var(--hk-err);

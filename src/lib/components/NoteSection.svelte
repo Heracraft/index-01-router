@@ -200,7 +200,21 @@
 		<h2 class="sec-h" id="{key}-h">
 			{named || isNew ? note.name || 'New daily note' : 'Daily note'}
 		</h2>
-		<Switch name="enabled" form={formId} checked={note.enabled} label="Write to this note" />
+		<span class="sset-a">
+			{#if !isNew}
+				<ConfirmAction
+					action="/settings?/noteDelete"
+					fields={{ id: note.id ?? '' }}
+					label="Remove"
+					title="Remove {named ? note.name : 'daily note'}"
+					confirmLabel="Remove"
+					triggerClass="hk-btn-ghost hk-btn-sm quiet"
+				>
+					<p>{deleteLine}</p>
+				</ConfirmAction>
+			{/if}
+			<Switch name="enabled" form={formId} checked={note.enabled} label="Write to this note" />
+		</span>
 	</div>
 
 	<form
@@ -313,7 +327,7 @@
 		</div>
 
 		<fieldset class="f trig">
-			<legend class="hk-field-label">From</legend>
+			<legend class="hk-field-label">Recordings from</legend>
 			<div class="chips">
 				{#each triggers as t (t)}
 					<label class="tchip">
@@ -354,7 +368,7 @@
 					{#if note.envValues.url && !urlOpen}
 						<div class="locked">
 							<Icon name="lock" />
-							<span class="grow">From <span class="hk-mono">{note.envSet.url}</span></span>
+							<span class="grow" title={note.envSet.url}>Set on the server</span>
 							<span class="hk-mono lv">{note.envValues.url}</span>
 							<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (urlOpen = true)}
 								>Replace</button
@@ -460,19 +474,6 @@
 		</details>
 	</form>
 	{#if !isNew}
-		<div class="srow">
-			<span class="srow-l">Remove {named ? note.name : 'daily note'}</span>
-			<ConfirmAction
-				action="/settings?/noteDelete"
-				fields={{ id: note.id ?? '' }}
-				label="Remove"
-				title="Remove {named ? note.name : 'daily note'}"
-				confirmLabel="Remove"
-				triggerClass="hk-btn-secondary hk-btn-sm danger"
-			>
-				<p>{deleteLine}</p>
-			</ConfirmAction>
-		</div>
 		<SaveBar {dirty} keys={[key]} />
 	{/if}
 	{#if isNew}
@@ -539,7 +540,15 @@
 	.bad {
 		color: var(--hk-err);
 	}
-	.srow :global(.danger) {
+	.sset-a {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.sset-a :global(.quiet) {
+		color: var(--hk-text-3);
+	}
+	.sset-a :global(.quiet:hover) {
 		color: var(--hk-err);
 	}
 	.since {

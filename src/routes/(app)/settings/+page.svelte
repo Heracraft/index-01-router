@@ -125,7 +125,7 @@
 					/>
 				{:else}
 					<button type="button" class="addrow" onclick={() => (adding = true)}
-						><Icon name="plus" size={14} />Add note</button
+						><Icon name="plus" size={14} />Add another daily note</button
 					>
 				{/if}
 			</div>
@@ -148,16 +148,13 @@
 
 <style>
 	.addrow {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
-		gap: 0.5rem;
-		width: 100%;
-		min-height: 3rem;
-		margin-top: 0.75rem;
-		padding: 0 0.75rem;
-		border: 1px dashed var(--hk-border-strong);
-		border-radius: var(--hk-radius);
-		background: transparent;
+		gap: 0.375rem;
+		margin-top: 1.25rem;
+		padding: 0;
+		border: 0;
+		background: none;
 		color: var(--hk-text-2);
 		font: inherit;
 		font-size: 0.875rem;
@@ -165,8 +162,6 @@
 	}
 	.addrow:hover {
 		color: var(--hk-text);
-		border-color: var(--hk-text-3);
-		background: var(--hk-hover);
 	}
 	#note {
 		scroll-margin-top: 4.5rem;

@@ -63,7 +63,7 @@ describe('entryState', () => {
 				languages: ['en', 'sw'],
 				transcribedBy: 'index-app'
 			})
-		).toEqual(['Double click', 'App transcript', 'en · sw']);
+		).toEqual(['Double click', 'App transcript', 'English, Swahili']);
 	});
 
 	it('draws the same bars for the same id', () => {

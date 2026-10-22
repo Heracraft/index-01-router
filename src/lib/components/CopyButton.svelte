@@ -181,7 +181,7 @@
 	}
 	.text > span {
 		grid-area: 1 / 1;
-		text-align: center;
+		text-align: start;
 	}
 	.text > .off {
 		visibility: hidden;

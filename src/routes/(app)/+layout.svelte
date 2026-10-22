@@ -149,6 +149,7 @@
 				class="hk-btn-ghost iconbtn"
 				class:is-cur={onSearch}
 				href={resolve('/(app)/recordings')}
+				onclick={() => (live.find = true)}
 				aria-label="Search"
 				title="Search"><Icon name="search" size={18} /></a
 			>

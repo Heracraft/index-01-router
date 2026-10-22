@@ -39,6 +39,8 @@
 	const waiting = $derived(
 		!!ring.rotatedAt && (!ring.last || new Date(ring.rotatedAt) > new Date(ring.last.at))
 	);
+	// The URL breaks only after a slash, never inside a word
+	const urlParts = $derived(ring.webhookUrl.split(/(?<=\/)/));
 	const submit = $derived(sectionSubmit(dirty, 'ring', { result: () => {} }));
 </script>
 
@@ -61,7 +63,9 @@
 	<div class="f">
 		<span class="hk-field-label" id="url-label">Webhook URL</span>
 		<div class="hk-secret" aria-labelledby="url-label">
-			<span class="scroll url">{ring.webhookUrl}</span>
+			<span class="scroll url"
+				>{#each urlParts as p, i (i)}{p}<wbr />{/each}</span
+			>
 			<CopyButton text={ring.webhookUrl} label="Copy" />
 		</div>
 	</div>
@@ -70,7 +74,9 @@
 		<span class="hk-field-label" id="secret-label">Signing secret</span>
 		<div class="hk-secret" aria-labelledby="secret-label">
 			{#if ring.secretLocked}
-				<span class="env"><Icon name="lock" size={12} />INDEX01_WEBHOOK_SECRET</span>
+				<span class="env" title="INDEX01_WEBHOOK_SECRET"
+					><Icon name="lock" size={12} />Set on the server</span
+				>
 			{/if}
 			<span class="scroll" class:dim={!revealed}>{revealed ?? masked}</span>
 			{#if revealed}
@@ -161,12 +167,29 @@
 	.hk-secret {
 		min-height: 2.75rem;
 	}
-	.hk-secret :global(.copy) {
+	/* Copy, Reveal and Rotate inside a field: one bare ghost style */
+	.hk-secret :global(.copy.copy--labelled) {
+		height: 1.875rem;
+		padding: 0 0.625rem;
+		gap: 0.375rem;
+		border-color: transparent;
+		background: transparent;
+		color: var(--hk-text-2);
 		font-family: var(--hk-font-sans);
+		font-weight: 500;
+	}
+	.hk-secret :global(.copy.copy--labelled:hover) {
+		background: var(--hk-hover);
+		color: var(--hk-text);
+	}
+	.hk-secret :global(.copy .ic) {
+		width: 14px;
+		height: 14px;
 	}
 	.url {
 		white-space: normal;
-		overflow-wrap: anywhere;
+		overflow-wrap: normal;
+		word-break: normal;
 		line-height: 1.45;
 		padding-block: 0.5rem;
 	}
