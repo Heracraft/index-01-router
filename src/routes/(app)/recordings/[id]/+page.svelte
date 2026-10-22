@@ -14,7 +14,6 @@
 		dayKey,
 		formatBytes,
 		formatDateTime,
-		formatDuration,
 		formatElapsed,
 		formatTime,
 		isPending,
@@ -39,6 +38,7 @@
 		st.kind === 'failed' && st.step === 'transcribe' && st.fix.action === 'delete'
 	);
 	const failedDeliveries = $derived(data.deliveries.filter((d) => d.status === 'failed'));
+	const sentDeliveries = $derived(data.deliveries.filter((d) => d.status === 'sent'));
 
 	// The day this recording sits in: the back link names it, the title is the time alone
 	const dayName = $derived(rel ?? longDay(data.day));
@@ -52,8 +52,6 @@
 					timeZone: 'UTC'
 				})
 	);
-	/** Today, Yesterday, or Tue, Oct 20 */
-	const dayShort = $derived(rel ?? relShort);
 	const langs = $derived(rec.languages.map((l) => languageName(l)).join(', '));
 
 	// Problem block: the cause, one fact line and one action
@@ -62,11 +60,19 @@
 		if (st.step === 'deliver') {
 			const d = failedDeliveries[0];
 			if (!d) return '';
-			const tries = d.attempts === 1 ? '1 try' : `${d.attempts} tries`;
-			return `${tries}, last at ${formatTime(d.updatedAt, tz)}`;
+			if (d.attempts < 2) return '';
+			return `${d.attempts} tries, last at ${formatTime(d.updatedAt, tz)}`;
 		}
-		const tries = rec.attempts === 1 ? '1 try' : `${rec.attempts} tries`;
-		return `${tries}, last at ${formatTime(rec.updatedAt, tz)}`;
+		// One try at the time of the recording says nothing the title does not
+		if (rec.attempts < 2) return '';
+		return `${rec.attempts} tries, last at ${formatTime(rec.updatedAt, tz)}`;
+	});
+	// The stored error under the banner's cause only when it says more: a provider's own words,
+	// not the sentence the cause already maps
+	const rawLine = $derived.by(() => {
+		if (st.kind !== 'failed' || !st.raw) return null;
+		const generic = st.cause === 'Not transcribed' || st.cause === 'Not sent to the note';
+		return generic || st.raw.length > 80 ? st.raw : null;
 	});
 
 	const deleteLine = $derived.by(() => {
@@ -76,13 +82,11 @@
 			)
 		];
 		return [
-			rec.hasAudio
-				? `Audio (${[ext, formatBytes(rec.audioBytes)].filter(Boolean).join(', ')}) and transcript go.`
-				: 'Transcript goes.',
+			rec.hasAudio ? 'Deletes the audio and transcript.' : 'Deletes the transcript.',
 			sent.length === 1
-				? `${sent[0]} keeps its entry.`
+				? `${sent[0]} keeps its line.`
 				: sent.length > 1
-					? `${sent.join(', ')} keep their entries.`
+					? `${sent.join(', ')} keep their lines.`
 					: ''
 		]
 			.filter(Boolean)
@@ -99,15 +103,8 @@
 		};
 	};
 
-	// Details opens for a failure, and otherwise stays as you left it across live reloads
+	// Details stays shut until asked for; the banner carries a failure
 	let detOpen = $state(false);
-	let detFor = '';
-	$effect.pre(() => {
-		const k = `${rec.id}:${st.kind === 'failed'}`;
-		if (k === detFor) return;
-		detFor = k;
-		detOpen = st.kind === 'failed';
-	});
 
 	let editing = $state(false);
 	let draft = $state('');
@@ -153,13 +150,6 @@
 				: 'Sending to the note'
 	);
 	const lineCount = (text: string) => text.split('\n').length;
-	/** This recording's own line in the note: printed in full above, so two lines here at most,
-	   cut at a word with no stop before the ellipsis */
-	const short = (text: string, max = 150) => {
-		if (text.length <= max) return text;
-		const cut = text.slice(0, max).replace(/\s+\S*$/, '');
-		return `${cut.replace(/[\s.,;:!?]+$/, '')}…`;
-	};
 	const sectionTitle = (c: (typeof data.contexts)[number]) =>
 		data.contexts.length > 1
 			? c.name
@@ -192,12 +182,9 @@
 				aria-label={dayName}
 				title={dayName}><Icon name="left" size={18} /></a
 			>
-			<h1 class="hk-h1-app">{dayShort} · {formatTime(rec.recordedAt, tz)}</h1>
-			<p class="rec-m">
-				{#if rec.durationMs != null}<span>{formatDuration(rec.durationMs)}</span>{/if}
-				{#if rec.trigger !== 'single-click-hold'}<span>{triggerLabel(rec.trigger)}</span>{/if}
-				{#if langs}<span>{langs}</span>{/if}
-			</p>
+			<h1 class="hk-h1-app">{dayName} · {formatTime(rec.recordedAt, tz)}</h1>
+			<!-- The player shows the length; how it came in sits in Details -->
+			{#if langs}<p class="rec-m"><span>{langs}</span></p>{/if}
 		</div>
 
 		{#if formError}
@@ -283,14 +270,10 @@
 						>
 					{/if}
 				</div>
-			{:else if desc.slot.kind === 'pending'}
-				<div class="skeleton" aria-label="Transcribing">
-					<span class="hk-skeleton" style:width="92%"></span>
-					<span class="hk-skeleton" style:width="78%"></span>
-					<span class="hk-skeleton" style:width="40%"></span>
-				</div>
 			{:else if desc.slot.kind === 'no-speech'}
 				<p class="none">No speech</p>
+			{:else if desc.slot.kind === 'error'}
+				<p class="none">No transcript</p>
 			{/if}
 			{#if rec.appTranscript}
 				<details class="app">
@@ -300,13 +283,15 @@
 			{/if}
 		</section>
 
-		{#each hasTranscript ? data.contexts : [] as c (c.integrationId)}
-			<!-- Sent: the note's path is enough, the words are above. Not sent: where it would land -->
-			{@const alone = c.sent}
+		<!-- No words, no line: a failed transcription shows only the note it was meant for -->
+		{#each hasTranscript || st.kind === 'failed' ? data.contexts : [] as c (c.integrationId)}
+			<!-- The line between its neighbours: marked where it landed, dashed where it would.
+			     Nothing else in the section: the note's path is enough. The line itself reads in
+			     full, its neighbours one line each -->
 			<section class="sec" aria-label={sectionTitle(c)}>
 				<h2 class="sec-h">{sectionTitle(c)}</h2>
 				<article class="sheet sheet--sm">
-					<div class="sheet-bar" class:sheet-bar--only={alone}>
+					<div class="sheet-bar">
 						<span class="path-s">
 							{#if c.sent}
 								<Icon name="check" size={14} class="ok-check" /><span class="hk-sr">Written to</span
@@ -321,11 +306,11 @@
 							>
 						</span>
 						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
-						{#if c.link}<a class="hk-link open" href={c.link}
-								>Open in Obsidian <Icon name="external" size={14} /></a
+						{#if c.link}<a class="hk-link open dh-open" href={c.link} aria-label="Open in Obsidian"
+								><span class="open-l">Open in Obsidian</span><Icon name="external" size={14} /></a
 							>{/if}
 					</div>
-					{#if !alone}<div class="sheet-body">
+					{#if hasTranscript}<div class="sheet-body">
 							<ul class="notes">
 								{#each c.lines as l, i (i)}
 									<li
@@ -336,9 +321,9 @@
 									>
 										<span class="e-t">{l.time ?? ''}</span>
 										<div class="e-b">
-											<p class="e-x" class:clamp2={!!l.mark}>
+											<p class="e-x" class:clamp1={!l.mark}>
 												{#if l.task !== null}<span class="task" class:on={l.task}
-													></span>{/if}{l.mark ? short(l.text) : l.text}
+													></span>{/if}{l.text}
 											</p>
 										</div>
 									</li>
@@ -364,6 +349,7 @@
 								{#if d.preview}
 									<NotePreview
 										path={d.target ?? d.name}
+										heading={c.heading}
 										body={d.preview.body}
 										entryLines={[d.preview.from, lineCount(d.preview.body)]}
 									/>
@@ -400,9 +386,13 @@
 			<dl>
 				<dt>Received</dt>
 				<dd>
-					{formatDateTime(rec.receivedAt, tz, { seconds: true })}
+					{formatDateTime(rec.receivedAt, tz)}
 					· {rec.source === 'upload' ? 'upload' : rec.signed ? 'signed' : 'unsigned'}
 				</dd>
+				{#if rec.source !== 'upload' && rec.trigger !== 'upload'}
+					<dt>Trigger</dt>
+					<dd>{triggerLabel(rec.trigger)}</dd>
+				{/if}
 				{#if data.userAgent}
 					<dt>Ring</dt>
 					<dd>{data.userAgent}</dd>
@@ -423,40 +413,47 @@
 						{/if}
 					</dd>
 				{/if}
-				{#if rec.attempts > 1}
+				{#if rec.attempts > 1 && st.kind !== 'failed'}
 					<dt>Attempts</dt>
 					<dd>{rec.attempts}</dd>
 				{/if}
-				{#each data.deliveries as d (d.id)}
+				<!-- A failed delivery is the banner's to tell -->
+				{#each data.deliveries.filter((d) => !(st.kind === 'failed' && d.status === 'failed')) as d (d.id)}
 					<dt>{d.name}</dt>
-					<dd class="dd-row">
-						<span>{sentLine(d)}</span>
-						{#if d.status === 'sent'}
-							<form class="inline" method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
-								<input type="hidden" name="delivery" value={d.id} />
-								<button class="linkbtn" disabled={busy || !!pending}
-									>{pending === d.id ? 'Sending…' : 'Send again'}</button
-								>
-							</form>
-						{/if}
-					</dd>
+					<dd>{sentLine(d)}</dd>
 				{/each}
-				{#if st.kind === 'failed' && st.raw}
+				{#if rawLine}
 					<dt>Error</dt>
-					<dd class="mono">{st.raw}</dd>
+					<dd class="mono">{rawLine}</dd>
 				{/if}
 				{#if desc.other && st.kind !== 'failed'}
 					<dt>Error</dt>
 					<dd>{desc.other}</dd>
 				{/if}
 				<dt>Delivery ID</dt>
-				<dd class="mono">{rec.deliveryId}</dd>
+				<dd class="idrow">
+					<span class="mono" title={rec.deliveryId}>{rec.deliveryId}</span>
+					<CopyButton text={rec.deliveryId} ariaLabel="Copy delivery ID" size="sm" />
+				</dd>
 			</dl>
+			<!-- One row of quiet buttons. The banner holds the one fix for a failure: no second retry here -->
 			<div class="det-a">
-				{#if rec.hasAudio || rec.appTranscript}
+				{#each sentDeliveries as d (d.id)}
+					<form method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
+						<input type="hidden" name="delivery" value={d.id} />
+						<button class="hk-btn-ghost hk-btn-sm" disabled={busy || !!pending}
+							>{pending === d.id
+								? 'Sending…'
+								: sentDeliveries.length > 1
+									? `Send again to ${d.name.toLowerCase()}`
+									: 'Send again'}</button
+						>
+					</form>
+				{/each}
+				{#if (rec.hasAudio || rec.appTranscript) && st.kind !== 'failed'}
 					<form method="POST" action="?/transcribe" use:enhance={submit('transcribe')}>
 						<button
-							class="hk-btn-secondary hk-btn-sm"
+							class="hk-btn-ghost hk-btn-sm"
 							disabled={busy || !!pending}
 							aria-busy={pending === 'transcribe'}
 						>
@@ -466,38 +463,33 @@
 				{/if}
 				{#if hasTranscript && data.deliveries.length === 0 && data.matching.length}
 					<form method="POST" action="?/route" use:enhance={submit('route')}>
-						<button class="hk-btn-secondary hk-btn-sm" disabled={busy || !!pending}
+						<button class="hk-btn-ghost hk-btn-sm" disabled={busy || !!pending}
 							>{pending === 'route'
 								? 'Sending…'
 								: `Send to ${data.matching[0]?.name.toLowerCase()}`}</button
 						>
 					</form>
 				{/if}
-				<ConfirmAction
-					action="?/delete"
-					label="Delete recording"
-					title="Delete the {formatTime(rec.recordedAt, tz)} recording"
-					confirmLabel="Delete"
-					triggerClass="hk-btn-secondary hk-btn-sm danger"
-				>
-					<p>{deleteLine}</p>
-				</ConfirmAction>
+				{#if !(st.kind === 'failed' && st.fix.action === 'delete')}<ConfirmAction
+						action="?/delete"
+						label="Delete"
+						title="Delete the {formatTime(rec.recordedAt, tz)} recording"
+						triggerClass="hk-btn-ghost hk-btn-sm danger"
+					>
+						<p>{deleteLine}</p>
+					</ConfirmAction>{/if}
 			</div>
 		</details>
 	</main>
 </div>
 
 <style>
+	/* In flight: the state stands in the words' place, in their size */
 	.live {
-		margin-bottom: 0.75rem;
-	}
-	.skeleton {
-		display: grid;
-		gap: 0.75rem;
-		padding-block: 0.6rem;
-	}
-	.skeleton .hk-skeleton {
-		height: 1.1rem;
+		margin: 0;
+		font-size: 1.0625rem;
+		line-height: 1.6;
+		gap: 0.625rem;
 	}
 	.edit {
 		font-size: 1.0625rem;
@@ -522,23 +514,35 @@
 	.issue form {
 		display: contents;
 	}
-	.dd-row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0 0.75rem;
-	}
-	.inline {
-		display: inline;
-	}
 	.det-a :global(.danger) {
 		color: var(--hk-err);
+	}
+	.det-a :global(.danger:hover) {
+		color: var(--hk-err);
+		background: var(--hk-err-wash);
 	}
 	.resend form {
 		display: contents;
 	}
-	.sheet-bar--only {
-		border-bottom: 0;
+	/* One line however narrow: the ID ends in an ellipsis, the copy takes it whole */
+	.idrow {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		min-width: 0;
+	}
+	.idrow .mono {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--hk-font-mono);
+		font-size: 0.75rem;
+		color: var(--hk-text-2);
+	}
+	.idrow :global(.copy) {
+		flex: none;
+		margin-block: -0.25rem;
 	}
 	@media (max-width: 639.98px) {
 		.tacts :global(:is(.hk-btn-ghost, .copy.copy--labelled)) {

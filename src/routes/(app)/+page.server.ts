@@ -43,19 +43,15 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const file = data.get('audio');
 		if (!(file instanceof File) || file.size === 0) {
-			return fail(400, { upload: 'Pick an audio file.' });
+			return fail(400, { upload: 'No file' });
 		}
 		const mime = audioMime(file);
 		if (!mime) {
-			return fail(400, {
-				upload: `${file.name} is not audio. Use m4a, mp3, wav, ogg, webm or flac.`
-			});
+			return fail(400, { upload: 'Not audio' });
 		}
-		const lastModified = Number(data.get('lastModified'));
-		const recordedAt =
-			Number.isFinite(lastModified) && lastModified > 946684800000 && lastModified <= Date.now()
-				? new Date(lastModified)
-				: new Date();
+		// A file's modified time is when it was copied or downloaded as often as when it was
+		// recorded, so an upload sits at the moment it arrived: the newest line of today
+		const recordedAt = new Date();
 		try {
 			const { recording } = await createRecording({
 				source: 'upload',
@@ -73,7 +69,7 @@ export const actions: Actions = {
 			};
 		} catch (e) {
 			console.error('upload failed', e);
-			return fail(500, { upload: `Could not store ${file.name}: ${(e as Error).message}` });
+			return fail(500, { upload: 'Upload failed' });
 		}
 	}
 };

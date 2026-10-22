@@ -10,7 +10,8 @@ export type SheetLine =
 
 /**
  * The day as the note reads: note lines in their order, recordings matched to the lines they
- * wrote, the rest placed by time, and recordings still in flight at the end.
+ * wrote, failed and unsent recordings slotted in by time, and recordings in flight after them,
+ * where an append would put them.
  */
 export function mergeSheet(
 	recs: EntryRec[],
@@ -27,7 +28,6 @@ export function mergeSheet(
 	const ascending = [...recs].sort(
 		(a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
 	);
-	const flying = ascending.filter((r) => isInFlight(entryState(r)));
 	const settled = ascending.filter((r) => !isInFlight(entryState(r)));
 	const sentHere = (r: EntryRec) =>
 		r.deliveries.some((d) => d.status === 'sent' && (!opts.path || d.target === opts.path));
@@ -53,8 +53,7 @@ export function mergeSheet(
 		})
 	);
 
-	type Placed = { line: SheetLine; time: string | null };
-	const placed: Placed[] = [];
+	const placed: SheetLine[] = [];
 	const used = new Set<string>();
 	const texts = (blocks ?? []).filter((b) => b.type !== 'heading');
 	texts.forEach((b, i) => {
@@ -67,32 +66,104 @@ export function mergeSheet(
 				: undefined);
 		if (hit) {
 			used.add(hit.id);
-			placed.push({ line: { type: 'rec', key: hit.id, rec: hit }, time: timeOf(hit) });
+			placed.push({ type: 'rec', key: hit.id, rec: hit });
 		} else {
-			placed.push({
-				line: { type: 'typed', key: `t${i}`, time: b.time, text: b.text, task: b.task },
-				time: b.time
-			});
+			placed.push({ type: 'typed', key: `t${i}`, time: b.time, text: b.text, task: b.task });
 		}
 	});
-	// Untimed note lines sort with the line above them
-	let last: string | null = null;
-	for (const p of placed) {
-		if (p.time) last = p.time;
-		else p.time = last;
-	}
-	for (const r of settled) {
+	// A settled recording that is not in the note (failed, unsent) slots in by its time, so the
+	// day still reads in order; one in flight goes last, where its append will land
+	const lineTime = (l: SheetLine) => (l.type === 'typed' ? l.time : timeOf(l.rec));
+	for (const r of ascending) {
 		if (used.has(r.id)) continue;
+		const line: SheetLine = { type: 'rec', key: r.id, rec: r };
+		if (isInFlight(entryState(r))) {
+			placed.push(line);
+			continue;
+		}
 		const t = timeOf(r);
-		const at = placed.findIndex((p) => p.time !== null && p.time > t);
-		const item: Placed = { line: { type: 'rec', key: r.id, rec: r }, time: t };
-		if (at < 0) placed.push(item);
-		else placed.splice(at, 0, item);
+		const at = placed.findIndex((l) => {
+			const lt = lineTime(l);
+			return lt !== null && lt > t;
+		});
+		if (at < 0) placed.push(line);
+		else placed.splice(at, 0, line);
 	}
-	return [
-		...placed.map((p) => p.line),
-		...flying
-			.filter((r) => !used.has(r.id))
-			.map((r): SheetLine => ({ type: 'rec', key: r.id, rec: r }))
-	];
+	return placed;
+}
+
+export type SheetSection = { heading: string; lines: SheetLine[] };
+
+/**
+ * Sections of the note other than `heading` that hold a line a recording wrote, in note order,
+ * each with its own lines; for a note whose heading setting changed after some lines landed.
+ * `at` is where the configured section sits among them. Recordings matched here are in `used`.
+ */
+export function otherSections(
+	recs: EntryRec[],
+	blocks: Block[],
+	heading: string,
+	opts: { entryTemplate: string; timeZone: string }
+): { sections: SheetSection[]; at: number; used: Set<string> } {
+	const want = heading.trim().toLowerCase();
+	const flat: { heading: string; level: number; blocks: Block[] }[] = [];
+	let mainLevel = 0;
+	let inMain = false;
+	let at = -1;
+	for (const b of blocks) {
+		if (b.type === 'heading') {
+			if (inMain && b.level > mainLevel) continue;
+			inMain = b.text.trim().toLowerCase() === want && at < 0;
+			if (inMain) {
+				mainLevel = b.level;
+				at = flat.length;
+				continue;
+			}
+			flat.push({ heading: b.text, level: b.level, blocks: [] });
+		} else if (!inMain) flat.at(-1)?.blocks.push(b);
+	}
+	const raw = new Map<string, string>();
+	for (const r of recs) {
+		if (!r.transcript) continue;
+		try {
+			raw.set(
+				entryRaw(
+					renderEntry(opts.entryTemplate, {
+						recordedAt: new Date(r.recordedAt),
+						timeZone: opts.timeZone,
+						transcript: r.transcript,
+						languages: r.languages,
+						trigger: r.trigger,
+						durationMs: r.durationMs
+					})
+				),
+				r.id
+			);
+		} catch {
+			// a bad template: nothing matches
+		}
+	}
+	const byId = new Map(recs.map((r) => [r.id, r]));
+	const used = new Set<string>();
+	const sections: SheetSection[] = [];
+	const kept: number[] = [];
+	flat.forEach((f, n) => {
+		const hits = f.blocks.map((b) => {
+			const id = b.type === 'heading' ? undefined : raw.get(b.raw);
+			return id && !used.has(id) ? id : null;
+		});
+		if (!hits.some(Boolean)) return;
+		const lines = f.blocks.flatMap((b, i): SheetLine[] => {
+			if (b.type === 'heading') return [];
+			const id = hits[i];
+			if (id) {
+				used.add(id);
+				return [{ type: 'rec', key: id, rec: byId.get(id)! }];
+			}
+			return [{ type: 'typed', key: `s${n}-${i}`, time: b.time, text: b.text, task: b.task }];
+		});
+		sections.push({ heading: f.heading, lines });
+		kept.push(n);
+	});
+	return { sections, at: at < 0 ? sections.length : kept.filter((k) => k < at).length, used };
 }

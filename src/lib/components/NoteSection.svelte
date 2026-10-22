@@ -10,7 +10,7 @@
 	import { enhance } from '$app/forms';
 	import { sectionSubmit, type SectionResult } from './section-submit.ts';
 	import type { DirtyForms } from './dirty.svelte.ts';
-	import { renderEntry, renderNotePath, renderTemplate } from '#lib/notes/template.ts';
+	import { renderEntry, renderNotePath } from '#lib/notes/template.ts';
 	import { parseNote } from '#lib/notes/sheet.ts';
 	import { dayKey, formatDateTime, formatTime, triggerLabel } from '#lib/format.ts';
 	import type { FieldSpec } from '#lib/server/integrations/types.ts';
@@ -133,29 +133,23 @@
 			.trim()
 			.replace(/^#+\s*/, '');
 		let entry = '';
-		let head = '';
 		try {
 			entry = renderEntry(valueOf('entryTemplate'), vars);
-			head = renderTemplate(values.newNoteTemplate ?? '', { ...vars, transcript: '', heading });
 		} catch {
 			// a bad date token: the path line shows path errors; the body stays as typed
 		}
-		const blocks = parseNote(head);
-		const hasHeading = blocks.some(
-			(b) => b.type === 'heading' && b.text.trim().toLowerCase() === heading.toLowerCase()
-		);
-		const entryBlocks = parseNote(entry).filter((b) => b.type !== 'heading');
+		// The bar names the note and its heading; the body is the line alone, as it would read
 		return {
 			path,
 			pathError,
-			blocks: [
-				...blocks,
-				...(hasHeading ? [] : [{ type: 'heading' as const, level: 2, text: heading }])
-			],
-			entry: entryBlocks
+			heading,
+			entry: parseNote(entry).filter((b) => b.type !== 'heading')
 		};
 	});
 
+	const edited = $derived(
+		['notePath', 'heading', 'entryTemplate'].some((k) => (values[k] ?? '') !== str(k))
+	);
 	const whenFact = (d: Date) =>
 		dayKey(d, timezone) === dayKey(now, timezone)
 			? formatTime(d, timezone)
@@ -196,13 +190,23 @@
 	});
 </script>
 
-<section class="sset" id={note.id ? `note-${note.id}` : 'note-new'} aria-labelledby="{key}-h">
+<section class="sset" id={note.id ? `note-${note.id}` : 'note-new'} aria-label={note.name}>
 	<div class="sset-h">
-		<h2 class="sec-h" id="{key}-h">
-			{named || isNew ? note.name || 'New daily note' : 'Daily note'}
-		</h2>
+		<div class="sec-h title">
+			<input
+				id="{key}-name"
+				class="title-in"
+				name="name"
+				form={formId}
+				value={note.name}
+				required
+				spellcheck="false"
+				autocomplete="off"
+				aria-label="Name"
+				aria-invalid={!!errorFor('name') || undefined}
+			/>
+		</div>
 		<span class="sset-a">
-			<label class="sw-l" for="{key}-on">{enabled ? 'On' : 'Off'}</label>
 			<Switch
 				id="{key}-on"
 				name="enabled"
@@ -212,6 +216,7 @@
 			/>
 		</span>
 	</div>
+	{#if errorFor('name')}<p class="f-err">{errorFor('name')}</p>{/if}
 
 	<form
 		id={formId}
@@ -282,10 +287,17 @@
 						>
 					{:else if failing && preview.path}
 						<span class="ring-warn" aria-hidden="true"></span><span class="path"
-							>{preview.path}</span
+							>{preview.path}{#if preview.heading}<span class="path-h"
+									>{` › ${preview.heading}`}</span
+								>{/if}</span
 						><span class="since">No answer since {whenFact(note.lastFailed!.at)}</span>
 					{:else if preview.path}
-						<Icon name="check" size={14} class="ok-check" /><span class="path">{preview.path}</span>
+						<!-- The check says the note takes lines as saved; an unsaved change is only a preview -->
+						{#if !edited}<Icon name="check" size={14} class="ok-check" />{/if}<span class="path"
+							>{preview.path}{#if preview.heading}<span class="path-h"
+									>{` › ${preview.heading}`}</span
+								>{/if}</span
+						>
 					{:else}
 						<span class="ring-err" aria-hidden="true"></span><span class="bad"
 							>{preview.pathError}</span
@@ -295,16 +307,6 @@
 			</div>
 			<div class="sheet-body">
 				<ul class="notes">
-					{#each preview.blocks as b, i (i)}
-						{#if b.type === 'heading'}
-							<li><h3 class="nh">{b.text}</h3></li>
-						{:else}
-							<li class="e e--typed">
-								<span class="e-t">{b.time ?? ''}</span>
-								<div class="e-b"><p class="e-x">{b.text}</p></div>
-							</li>
-						{/if}
-					{/each}
 					{#each preview.entry as b, i (i)}
 						<li class="e">
 							<span class="e-t">{b.time ?? ''}</span>
@@ -321,8 +323,8 @@
 				id="{key}-new"
 				bind:this={areas.newNoteTemplate}
 				name="config.newNoteTemplate"
-				class="hk-textarea hk-mono"
-				rows="3"
+				class="hk-textarea hk-mono grow-ta"
+				rows={Math.max(1, (values.newNoteTemplate ?? '').replace(/\n+$/, '').split('\n').length)}
 				spellcheck="false"
 				bind:value={values.newNoteTemplate}></textarea>
 			<div class="tokens" aria-label="Insert">
@@ -350,135 +352,125 @@
 			</div>
 			{#if errorFor('triggers')}<p class="f-err">{errorFor('triggers')}</p>{/if}
 		</fieldset>
+	</form>
 
-		<div class="fgrid fgrid--one">
+	<!-- Connection: outside the form so Remove can sit in it; its fields post with the form -->
+	<details class="sub-det" bind:open={connOpen} oninput={() => (stale = true)}>
+		<summary>
+			Connection
+			<span class="sum-v">
+				{#if lostKey}
+					<span class="dot err" aria-hidden="true"></span>Key unreadable
+				{:else if failing}
+					<span class="dot warn" aria-hidden="true"></span>No answer since {whenFact(
+						note.lastFailed!.at
+					)}
+				{:else if note.lastSent}
+					<span class="dot" aria-hidden="true"></span>Obsidian answered {whenFact(note.lastSent)}
+				{:else}
+					<span class="dot idle" aria-hidden="true"></span>Nothing sent yet
+				{/if}
+			</span>
+			<Icon name="chevron" />
+		</summary>
+		<div class="sub-body">
 			<div class="f">
-				<label class="hk-field-label" for="{key}-name">Name</label>
-				<input
-					id="{key}-name"
-					name="name"
-					class="hk-input"
-					value={note.name}
-					required
-					aria-invalid={!!errorFor('name') || undefined}
-				/>
-				{#if errorFor('name')}<p class="f-err">{errorFor('name')}</p>{/if}
+				<label class="hk-field-label" for="{key}-url">MCP URL</label>
+				{#if note.envValues.url && !urlOpen}
+					<div class="locked">
+						<Icon name="lock" />
+						<span class="grow" title={note.envSet.url}>Set on the server</span>
+						<span class="hk-mono lv">{note.envValues.url}</span>
+						<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (urlOpen = true)}
+							>Replace</button
+						>
+					</div>
+					<input type="hidden" name="config.url" value="" form={formId} />
+				{:else}
+					<input
+						id="{key}-url"
+						name="config.url"
+						form={formId}
+						class="hk-input hk-mono"
+						type="url"
+						spellcheck="false"
+						placeholder={note.envValues.url ?? fieldOf('url')?.placeholder}
+						bind:value={values.url}
+						aria-invalid={!!errorFor('url') || undefined}
+					/>
+				{/if}
+				{#if errorFor('url')}<p class="f-err">{errorFor('url')}</p>{/if}
 			</div>
-		</div>
-
-		<details class="sub-det" bind:open={connOpen}>
-			<summary>
-				Connection
-				<span class="sum-v">
-					{#if lostKey}
-						<span class="dot err" aria-hidden="true"></span>Key unreadable
-					{:else if failing}
-						<span class="dot warn" aria-hidden="true"></span>No answer since {whenFact(
-							note.lastFailed!.at
-						)}
-					{:else if note.lastSent}
-						<span class="dot" aria-hidden="true"></span>Obsidian answered {whenFact(note.lastSent)}
-					{:else}
-						<span class="dot idle" aria-hidden="true"></span>Nothing sent yet
+			<div class="f">
+				<SecretField
+					id="{key}-key"
+					name="config.apiKey"
+					form={formId}
+					label="API key"
+					set={!!note.secretsSet.apiKey}
+					lost={!!note.secretsLost.apiKey}
+					env={note.envSet.apiKey ?? null}
+					clearable={!!note.envSet.apiKey}
+					invalid={!!errorFor('apiKey')}
+					placeholder={fieldOf('apiKey')?.placeholder}
+				/>
+				{#if errorFor('apiKey')}<p class="f-err">{errorFor('apiKey')}</p>{/if}
+			</div>
+			{#if showTls || note.config.insecureTls === true}
+				<label class="hk-check tls">
+					<input
+						type="checkbox"
+						name="config.insecureTls"
+						form={formId}
+						checked={note.config.insecureTls === true}
+					/>
+					Accept a self-signed certificate
+				</label>
+				{#if errorFor('insecureTls')}<p class="f-err">{errorFor('insecureTls')}</p>{/if}
+			{/if}
+			<div class="actrow">
+				<button
+					class="hk-btn-secondary hk-btn-sm"
+					form={formId}
+					formaction="/settings?/noteTest"
+					disabled={!!busy}
+					aria-busy={busy === 'test'}>{busy === 'test' ? 'Checking…' : 'Check connection'}</button
+				>
+				<span class="result" role="status">
+					{#if !busy && looseError}
+						<span class="bad">{looseError}</span>
+					{:else if !busy && test && (test.ok || !failure?.field)}
+						<TestResult result={test} {stale}>
+							{#if test.ok}
+								<span class="hk-mono">{test.target}</span>
+								<span class="muted"
+									>· {test.state === 'heading'
+										? `## ${test.heading} found`
+										: test.state === 'note'
+											? `no ## ${test.heading} yet`
+											: 'new note'}</span
+								>
+							{/if}
+						</TestResult>
 					{/if}
 				</span>
-				<Icon name="chevron" />
-			</summary>
-			<div class="sub-body">
-				<div class="f">
-					<label class="hk-field-label" for="{key}-url">MCP URL</label>
-					{#if note.envValues.url && !urlOpen}
-						<div class="locked">
-							<Icon name="lock" />
-							<span class="grow" title={note.envSet.url}>Set on the server</span>
-							<span class="hk-mono lv">{note.envValues.url}</span>
-							<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (urlOpen = true)}
-								>Replace</button
-							>
-						</div>
-						<input type="hidden" name="config.url" value="" />
-					{:else}
-						<input
-							id="{key}-url"
-							name="config.url"
-							class="hk-input hk-mono"
-							type="url"
-							spellcheck="false"
-							placeholder={note.envValues.url ?? fieldOf('url')?.placeholder}
-							bind:value={values.url}
-							aria-invalid={!!errorFor('url') || undefined}
-						/>
-					{/if}
-					{#if errorFor('url')}<p class="f-err">{errorFor('url')}</p>{/if}
-				</div>
-				<div class="f">
-					<SecretField
-						id="{key}-key"
-						name="config.apiKey"
-						label="API key"
-						set={!!note.secretsSet.apiKey}
-						lost={!!note.secretsLost.apiKey}
-						env={note.envSet.apiKey ?? null}
-						clearable={!!note.envSet.apiKey}
-						invalid={!!errorFor('apiKey')}
-						placeholder={fieldOf('apiKey')?.placeholder}
-					/>
-					{#if errorFor('apiKey')}<p class="f-err">{errorFor('apiKey')}</p>{/if}
-				</div>
-				{#if showTls || note.config.insecureTls === true}
-					<label class="hk-check tls">
-						<input
-							type="checkbox"
-							name="config.insecureTls"
-							checked={note.config.insecureTls === true}
-						/>
-						Accept a self-signed certificate
-					</label>
-					{#if errorFor('insecureTls')}<p class="f-err">{errorFor('insecureTls')}</p>{/if}
-				{/if}
-				<div class="actrow">
-					<button
-						class="hk-btn-secondary hk-btn-sm"
-						formaction="/settings?/noteTest"
-						disabled={!!busy}
-						aria-busy={busy === 'test'}>{busy === 'test' ? 'Checking…' : 'Check connection'}</button
+				{#if !isNew}
+					<ConfirmAction
+						action="/settings?/noteDelete"
+						fields={{ id: note.id ?? '' }}
+						label="Remove"
+						icon="trash"
+						title="Remove {note.name}"
+						confirmLabel="Remove"
+						triggerClass="hk-btn-ghost hk-btn-sm quiet-danger"
 					>
-					<span class="result" role="status">
-						{#if !busy && looseError}
-							<span class="bad">{looseError}</span>
-						{:else if !busy && test && (test.ok || !failure?.field)}
-							<TestResult result={test} {stale}>
-								{#if test.ok}
-									<span class="hk-mono">{test.target}</span>
-									<span class="muted"
-										>· {test.state === 'heading'
-											? `## ${test.heading} found`
-											: test.state === 'note'
-												? `no ## ${test.heading} yet`
-												: 'new note'}</span
-									>
-								{/if}
-							</TestResult>
-						{/if}
-					</span>
-				</div>
+						<p>Notes in the vault stay.</p>
+					</ConfirmAction>
+				{/if}
 			</div>
-		</details>
-	</form>
-	{#if !isNew}
-		<div class="sfoot">
-			<ConfirmAction
-				action="/settings?/noteDelete"
-				fields={{ id: note.id ?? '' }}
-				label="Remove {named ? note.name : 'daily note'}"
-				icon="trash"
-				title="Remove {named ? note.name : 'daily note'}"
-				confirmLabel="Remove"
-				triggerClass="hk-btn-ghost hk-btn-sm quiet-danger"
-			>
-				<p>Notes in the vault stay.</p>
-			</ConfirmAction>
 		</div>
+	</details>
+	{#if !isNew}
 		<SaveBar {dirty} keys={[key]} />
 	{/if}
 	{#if isNew}
@@ -497,8 +489,12 @@
 	.preview .notes {
 		margin: 0;
 	}
-	.preview li > .nh {
-		margin: 0.25rem 0 0.25rem;
+	/* As tall as its lines (a trailing newline adds none), from one: a one-line value sits like
+	   the inputs above it */
+	textarea.grow-ta {
+		min-height: 2.25rem;
+		padding-block: 0.4375rem;
+		resize: none;
 	}
 	.trig {
 		border: 0;
@@ -547,20 +543,37 @@
 		align-items: center;
 		gap: 0.75rem;
 	}
-	.sw-l {
-		font-size: 0.8125rem;
-		color: var(--hk-text-3);
-		cursor: pointer;
-	}
-	.sfoot {
-		margin-top: 1.25rem;
-		margin-left: -0.625rem;
-	}
-	.sfoot :global(.quiet-danger) {
+	.sub-body :global(.quiet-danger) {
+		margin-left: auto;
 		color: var(--hk-text-3);
 	}
-	.sfoot :global(.quiet-danger:hover) {
+	.sub-body :global(.quiet-danger:hover) {
 		color: var(--hk-err);
+	}
+	/* The name is the title, renamed in place */
+	.title {
+		flex: 1;
+		min-width: 0;
+	}
+	.title-in {
+		width: 100%;
+		margin: 0 0 0 -0.375rem;
+		padding: 0 0.375rem;
+		border: 1px solid transparent;
+		border-radius: var(--hk-radius-6);
+		background: transparent;
+		font: inherit;
+		letter-spacing: inherit;
+		color: var(--hk-text);
+		text-overflow: ellipsis;
+	}
+	.title-in:hover {
+		border-color: var(--hk-border);
+	}
+	.title-in:focus {
+		outline: none;
+		border-color: var(--hk-accent);
+		background: var(--hk-surface);
 	}
 	.preview {
 		margin-top: 1.25rem;

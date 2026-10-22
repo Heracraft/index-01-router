@@ -1,9 +1,13 @@
 <script lang="ts">
-	/* The note as a delivery would write it, laid out as the vault shows it: path on top, the
-	   new entry's lines marked with the accent rule */
+	/* The note as a delivery would write it, laid out as the day sheet shows it: path and heading
+	   in the bar, then time-column rows, the new entry outlined where it would land */
+	import { parseNote } from '#lib/notes/sheet.ts';
+
 	interface Props {
 		/** Rendered note path; null when pathError is set */
 		path: string | null;
+		/** The heading lines go under, named in the bar after the path */
+		heading?: string | null;
 		pathError?: string | null;
 		barId?: string;
 		/** Rendered text: new-note template plus entry, or the entry alone */
@@ -11,11 +15,31 @@
 		/** Lines of body that are the new entry, as [first, end) */
 		entryLines?: [number, number];
 	}
-	let { path, pathError = null, barId, body, entryLines }: Props = $props();
+	let { path, heading = null, pathError = null, barId, body, entryLines }: Props = $props();
 
-	const lines = $derived(body.split('\n'));
-	const isEntry = (i: number) => !!entryLines && i >= entryLines[0] && i < entryLines[1];
-	const heading = (l: string) => /^#{1,6}\s/.test(l);
+	type Row =
+		| { type: 'heading'; text: string }
+		| { type: 'line'; time: string | null; text: string; task: boolean | null; entry: boolean };
+
+	const rows = $derived.by(() => {
+		const lines = body.split('\n');
+		const [from, end] = entryLines ?? [lines.length, lines.length];
+		const read = (md: string, entry: boolean): Row[] =>
+			parseNote(md).map((b) =>
+				b.type === 'heading'
+					? { type: 'heading', text: b.text }
+					: { type: 'line', time: b.time, text: b.text, task: b.task, entry }
+			);
+		const out = [...read(lines.slice(0, from).join('\n'), false)];
+		// The entry reads as one row, however many lines its template has
+		const entry = read(lines.slice(from, end).join('\n'), true).filter((r) => r.type === 'line');
+		if (entry.length) {
+			const [first, ...rest] = entry as Extract<Row, { type: 'line' }>[];
+			out.push({ ...first!, text: [first!.text, ...rest.map((r) => r.text)].join(' ') });
+		}
+		out.push(...read(lines.slice(end).join('\n'), false));
+		return out;
+	});
 </script>
 
 <article class="sheet sheet--sm np">
@@ -23,17 +47,27 @@
 		{#if pathError}
 			<span class="path err">{pathError}</span>
 		{:else}
-			<span class="path">{path}</span>
+			<span class="path"
+				>{path}{#if heading}<span class="path-h">{` › ${heading}`}</span>{/if}</span
+			>
 		{/if}
 	</div>
 	<div class="sheet-body">
-		{#each lines as line, i (i)}
-			{#if heading(line)}
-				<h3 class="nh">{line.replace(/^#+\s*/, '')}</h3>
-			{:else if line.trim()}
-				<p class="ln" class:e--this={isEntry(i)}>{line}</p>
-			{/if}
-		{/each}
+		<ul class="notes">
+			{#each rows as r, i (i)}
+				<!-- Headings stay out of the body: the bar names the one lines go under -->
+				{#if r.type === 'line'}
+					<li class="e" class:e--typed={!r.entry} class:e--pending={r.entry}>
+						<span class="e-t">{r.time ?? ''}</span>
+						<div class="e-b">
+							<p class="e-x">
+								{#if r.task !== null}<span class="task" class:on={r.task}></span>{/if}{r.text}
+							</p>
+						</div>
+					</li>
+				{/if}
+			{/each}
+		</ul>
 	</div>
 </article>
 
@@ -44,19 +78,7 @@
 	.err {
 		color: var(--hk-err);
 	}
-	.ln {
-		position: relative;
+	.notes {
 		margin: 0;
-		padding: 0.25rem 0;
-		font-size: 0.9375rem;
-		line-height: 1.6;
-		color: var(--hk-text-2);
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-	}
-	.ln.e--this {
-		color: var(--hk-text);
-		margin-inline: -0.75rem;
-		padding-inline: 0.75rem;
 	}
 </style>

@@ -45,7 +45,7 @@
 				href={monthHref(prevMonth)}
 				aria-label={monthLabel(prevMonth)}
 				data-sveltekit-reset="false"
-				data-sveltekit-replacestate><Icon name="left" /></a
+				data-sveltekit-replacestate><Icon name="left" size={14} /></a
 			>
 			{#if canNext}
 				<a
@@ -53,10 +53,12 @@
 					href={monthHref(nextMonth)}
 					aria-label={monthLabel(nextMonth)}
 					data-sveltekit-reset="false"
-					data-sveltekit-replacestate><Icon name="right" /></a
+					data-sveltekit-replacestate><Icon name="right" size={14} /></a
 				>
 			{:else}
-				<span class="iconbtn sm" aria-hidden="true"></span>
+				<span class="hk-btn-ghost iconbtn sm off" aria-hidden="true"
+					><Icon name="right" size={14} /></span
+				>
 			{/if}
 		</span>
 		<!-- eslint-enable svelte/no-navigation-without-resolve -->

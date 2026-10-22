@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import Segmented from './Segmented.svelte';
 
 	type Theme = 'system' | 'light' | 'dark';
-	let theme = $state<Theme>('system');
+	// The server renders the choice from the cookie the head script keeps; storage has the last word
+	let theme = $state<Theme>(page.data.theme ?? 'system');
 
 	onMount(() => {
 		const t = document.documentElement.dataset.theme;
@@ -18,6 +20,10 @@
 		} catch {
 			// storage blocked: the choice lasts for this page only
 		}
+		document.cookie =
+			value === 'system'
+				? 'hk-theme=; path=/; max-age=0; samesite=lax'
+				: `hk-theme=${value}; path=/; max-age=31536000; samesite=lax`;
 		if (value === 'system') delete root.dataset.theme;
 		else root.dataset.theme = value;
 	}

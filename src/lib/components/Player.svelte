@@ -23,26 +23,28 @@
 	});
 </script>
 
-<div class="player">
-	<button
-		type="button"
-		class="pbtn"
-		aria-label={on ? 'Pause' : 'Play'}
-		onclick={() => audio.toggle(id, durationMs)}
-	>
-		<Icon name={on ? 'pause' : 'play'} size={16} />
-	</button>
-	<Waveform {id} {durationMs} height={34} />
-	<span class="ptime"
-		><b>{formatDuration(here ? audio.time * 1000 : 0)}</b><span class="dur"
-			>&nbsp;/ {formatDuration(total)}</span
-		></span
-	>
-	<button
-		type="button"
-		class="speed"
-		aria-label="Speed {rate}"
-		title="Speed"
-		onclick={() => audio.cycleRate()}>{rate}</button
-	>
+<div class="pwrap">
+	<div class="player">
+		<button
+			type="button"
+			class="pbtn"
+			aria-label={on ? 'Pause' : 'Play'}
+			onclick={() => audio.toggle(id, durationMs)}
+		>
+			<Icon name={on ? 'pause' : 'play'} size={16} />
+		</button>
+		<Waveform {id} {durationMs} height={34} />
+		<span class="ptime"
+			><b>{formatDuration(here ? audio.time * 1000 : 0)}</b><span class="dur"
+				>&nbsp;/ {formatDuration(total)}</span
+			></span
+		>
+		<button
+			type="button"
+			class="speed"
+			aria-label="Speed {rate}"
+			title="Speed"
+			onclick={() => audio.cycleRate()}>{rate}</button
+		>
+	</div>
 </div>

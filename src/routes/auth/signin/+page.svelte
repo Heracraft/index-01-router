@@ -10,10 +10,9 @@
 	const switching = $derived(error?.code === 'denied' || error?.code === 'unverified');
 	const label = $derived(!error ? 'Sign in' : switching ? 'Use another account' : 'Try again');
 	let busy = $state(false);
-	// The ring's waveform as the page's one picture: one bar shape throughout, the last few in
-	// the accent the way the mark colours its last bar
+	// The ring's waveform as the page's one picture, in one neutral tone: the mark above holds
+	// the only blue
 	const bars = seededBars('index-01', 36);
-	const TAIL = 4;
 </script>
 
 <svelte:head>
@@ -27,10 +26,7 @@
 			<span class="wordmark">Index 01</span>
 		</p>
 		<div class="sigwave" aria-hidden="true">
-			{#each bars as h, i (i)}<i
-					style:height="{Math.round(h * 100)}%"
-					class:on={i >= bars.length - TAIL}
-				></i>{/each}
+			{#each bars as h, i (i)}<i style:height="{Math.round(h * 100)}%"></i>{/each}
 		</div>
 		{#if error}
 			<p class="hk-banner hk-banner--err" role="alert">
@@ -74,29 +70,27 @@
 		align-items: stretch;
 		width: 100%;
 		max-width: 20rem;
-		margin-top: -8vh;
+		/* The group's centre on the optical centre, about 45% down */
+		margin-top: -10vh;
 	}
 	.sigwave {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		height: 3rem;
-		margin: 0 0 2.5rem;
+		margin: 0 0 2rem;
 	}
 	.sigwave i {
 		flex: 0 0 3px;
 		border-radius: 2px;
 		background: var(--hk-border-strong);
 	}
-	.sigwave i.on {
-		background: var(--hk-accent);
-	}
 	.brand {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		gap: 0.875rem;
-		margin: 0 0 2rem;
+		margin: 0 0 1.5rem;
 		white-space: nowrap;
 	}
 	.wordmark {

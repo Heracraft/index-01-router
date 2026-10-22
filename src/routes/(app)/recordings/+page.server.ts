@@ -1,4 +1,4 @@
-import { and, eq, ilike, inArray, lt, sql, type SQL } from 'drizzle-orm';
+import { and, eq, ilike, inArray, lt, or, sql, type SQL } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
 import { recordings } from '#lib/server/db/schema.ts';
 import { entryRecs, loadRail } from '#lib/server/journal.ts';
@@ -27,13 +27,17 @@ export const load: PageServerLoad = async ({ url }) => {
 	const beforeRaw = url.searchParams.get('before');
 	const before = beforeRaw && !Number.isNaN(Date.parse(beforeRaw)) ? new Date(beforeRaw) : null;
 	const search = q ? ilike(recordings.transcript, `%${escapeLike(q)}%`) : undefined;
+	// Rows retried from this list stay in it, so you see them land
+	const keep = (url.searchParams.get('keep') ?? '')
+		.split(',')
+		.filter((id) => /^[0-9a-f-]{36}$/.test(id))
+		.slice(0, 50);
+	const where = filterWhere(filter);
+	const shown = where && keep.length ? or(where, inArray(recordings.id, keep)) : where;
 
 	const { timezone } = await getSettings('general');
 	const [recs, [counts], rail] = await Promise.all([
-		entryRecs(
-			and(filterWhere(filter), search, before ? lt(recordings.recordedAt, before) : undefined),
-			PAGE + 1
-		),
+		entryRecs(and(shown, search, before ? lt(recordings.recordedAt, before) : undefined), PAGE + 1),
 		db
 			.select({
 				all: sql<number>`count(*)`.mapWith(Number),
@@ -58,7 +62,14 @@ export const load: PageServerLoad = async ({ url }) => {
 		filter,
 		before: before?.toISOString() ?? null,
 		next: more && last ? new Date(last.recordedAt).toISOString() : null,
-		counts: counts ?? { all: 0, failed: 0, pending: 0, done: 0 },
+		counts: counts
+			? {
+					all: counts.all,
+					failed: counts.failed,
+					pending: counts.pending,
+					done: counts.done
+				}
+			: { all: 0, failed: 0, pending: 0, done: 0 },
 		recs,
 		rail
 	};

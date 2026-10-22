@@ -97,15 +97,18 @@ class SharedAudio {
 
 export const audio = new SharedAudio();
 
-// Waveform peaks decoded from the audio, cached per recording. Seeded bars stand in until then
-const peaks = $state<Record<string, number[]>>({});
+// Waveform peaks decoded from the audio, cached per recording. Until they arrive the bars sit
+// low and even in their final colour, then grow to the shape; seeded bars stand in only for
+// audio this browser cannot decode
+const peaks = $state<Record<string, number[] | 'none'>>({});
 // Plain set: which ids were fetched, never read by markup
 // eslint-disable-next-line svelte/prefer-svelte-reactivity
 const asked = new Set<string>();
 
 export function barsFor(id: string, n: number): number[] {
 	const real = peaks[id];
-	if (!real) return seededBars(id, n);
+	if (!real) return Array<number>(n).fill(0.12);
+	if (real === 'none') return seededBars(id, n);
 	if (real.length === n) return real;
 	// Resample to n bars
 	return Array.from({ length: n }, (_, i) => real[Math.floor((i * real.length) / n)] ?? 0.2);
@@ -116,7 +119,10 @@ export async function loadPeaks(id: string, n = 160) {
 	asked.add(id);
 	try {
 		const res = await fetch(`/recordings/${id}/audio`);
-		if (!res.ok) return;
+		if (!res.ok) {
+			peaks[id] = 'none';
+			return;
+		}
 		const buf = await res.arrayBuffer();
 		const ctx = new OfflineAudioContext(1, 1, 8000);
 		const decoded = await ctx.decodeAudioData(buf);
@@ -132,6 +138,7 @@ export async function loadPeaks(id: string, n = 160) {
 		const max = Math.max(...raw, 1e-6);
 		peaks[id] = raw.map((v) => 0.12 + 0.88 * Math.pow(v / max, 0.7));
 	} catch {
-		// Undecodable here: the seeded bars stay
+		// Undecodable here: seeded bars instead
+		peaks[id] = 'none';
 	}
 }

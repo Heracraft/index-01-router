@@ -55,7 +55,7 @@ describe('entryState', () => {
 		).toMatchObject({ step: 'transcribe', cause: 'Audio unreadable', fix: { action: 'delete' } });
 	});
 
-	it('marks only the exceptions', () => {
+	it('marks one exception, never how it came in', () => {
 		expect(
 			entryMeta({
 				...base,
@@ -63,7 +63,33 @@ describe('entryState', () => {
 				languages: ['en', 'sw'],
 				transcribedBy: 'index-app'
 			})
-		).toEqual(['Double click', 'App transcript', 'English, Swahili']);
+		).toEqual(['English, Swahili']);
+		expect(entryMeta({ ...base, trigger: 'double-click-hold' })).toEqual([]);
+	});
+
+	it('puts the outcome first and lets No speech speak for itself', () => {
+		expect(
+			entryMeta({
+				...base,
+				trigger: 'upload',
+				deliveries: [
+					{
+						id: 'd1',
+						status: 'sent',
+						error: null,
+						attempts: 1,
+						target: 'Daily/x.md',
+						stale: true,
+						name: 'Daily note',
+						updatedAt: new Date()
+					}
+				]
+			})
+		).toEqual(['Edited']);
+		expect(entryMeta({ ...base, transcript: null, trigger: 'upload' })).toEqual([]);
+		expect(
+			entryMeta({ ...base, status: 'transcribing', transcript: null, trigger: 'upload' })
+		).toEqual([]);
 	});
 
 	it('draws the same bars for the same id', () => {

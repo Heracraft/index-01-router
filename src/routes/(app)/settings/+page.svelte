@@ -56,19 +56,37 @@
 		const els = index
 			.map((s) => document.getElementById(s.id))
 			.filter((e): e is HTMLElement => !!e);
+		// The section that owns the top third of the viewport, under the sticky header, is the
+		// one in view; at the very bottom the last one is, however short
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping inside one observer, never rendered
+		const inBand = new Set<string>();
+		const pick = () => {
+			const atEnd =
+				window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+			if (atEnd && els.length) current = els.at(-1)!.id;
+			else {
+				const hit = els.find((e) => inBand.has(e.id));
+				if (hit) current = hit.id;
+			}
+		};
 		const io = new IntersectionObserver(
 			(entries) => {
-				const top = entries
-					.filter((e) => e.isIntersecting)
-					.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-				if (top) current = top.target.id;
+				for (const e of entries) {
+					if (e.isIntersecting) inBand.add(e.target.id);
+					else inBand.delete(e.target.id);
+				}
+				pick();
 			},
-			{ rootMargin: '-80px 0px -60% 0px' }
+			{ rootMargin: '-30% 0px -60% 0px' }
 		);
 		els.forEach((e) => io.observe(e));
+		window.addEventListener('scroll', pick, { passive: true });
 		// Old links to one integration land on its section
 		if (location.hash.startsWith('#note-')) document.querySelector(location.hash)?.scrollIntoView();
-		return () => io.disconnect();
+		return () => {
+			io.disconnect();
+			window.removeEventListener('scroll', pick);
+		};
 	});
 
 	function discard() {

@@ -4,14 +4,14 @@
 	   only its time, text and play pill */
 	import { applyAction, enhance } from '$app/forms';
 	import { goto, refreshAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import ConfirmAction from './ConfirmAction.svelte';
 	import Icon from './Icon.svelte';
 	import PlayPill from './PlayPill.svelte';
-	import Waveform from './Waveform.svelte';
 	import { audio } from './audio.svelte.ts';
 	import { live } from './live.svelte.ts';
 	import { entryMeta, entryState, type EntryRec } from '#lib/entry.ts';
-	import { formatDuration, formatTime } from '#lib/format.ts';
+	import { formatTime } from '#lib/format.ts';
 
 	interface Props {
 		rec: EntryRec;
@@ -28,10 +28,25 @@
 	const showProgress = $derived(audio.id === rec.id && (audio.playing || audio.time > 0));
 
 	let open = $state(false);
-	/** A search hit shows whole, so you see why it matched */
-	const hit = $derived(
-		!!mark.trim() && (rec.transcript ?? '').toLowerCase().includes(mark.trim().toLowerCase())
+	/** Where a search hit starts in the transcript, or -1 */
+	const hitAt = $derived(
+		mark.trim() ? (rec.transcript ?? '').toLowerCase().indexOf(mark.trim().toLowerCase()) : -1
 	);
+	/** Folded, a hit in a long transcript shows with about a line of words each side, cut at words */
+	const excerpt = (t: string) => {
+		if (open || hitAt < 0 || t.length <= 180) return { text: t, cut: false };
+		const end = hitAt + mark.trim().length;
+		const from = hitAt <= 50 ? 0 : t.lastIndexOf(' ', hitAt - 50) + 1;
+		let to = end + 60 >= t.length ? t.length : t.indexOf(' ', end + 60);
+		if (to < 0) to = t.length;
+		const head = from > 0 ? '…' : '';
+		const tail = to < t.length ? '…' : '';
+		if (!head && !tail) return { text: t, cut: false };
+		return {
+			text: `${head}${t.slice(from, to).replace(/[\s.,;:]+$/, tail ? '' : '$&')}${tail}`,
+			cut: true
+		};
+	};
 	let over = $state(false);
 	let pending = $state(false);
 	let retryError = $state<string | null>(null);
@@ -40,11 +55,35 @@
 	function flash(node: HTMLElement) {
 		if (live.flash !== rec.id) return;
 		live.flash = null;
-		node.scrollIntoView({ block: 'center' });
-		node.classList.add('e--flash');
-		const t = setTimeout(() => node.classList.remove('e--flash'), 2400);
-		return { destroy: () => clearTimeout(t) };
+		// After the navigation settles, so nothing scrolls it away again
+		const f = requestAnimationFrame(() => {
+			node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			node.classList.add('e--flash');
+		});
+		const t = setTimeout(() => node.classList.remove('e--flash'), 2600);
+		return {
+			destroy: () => {
+				cancelAnimationFrame(f);
+				clearTimeout(t);
+			}
+		};
 	}
+
+	/** A retried row stays where it is, even in a list of failures, until you see it land */
+	async function retried() {
+		if (!live.retried.includes(rec.id)) live.retried.push(rec.id);
+		const u = new URL(page.url.href);
+		if (u.searchParams.get('status') !== 'failed') return refreshAll();
+		u.searchParams.set('keep', live.retried.join(','));
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- this page's own URL
+		await goto(`${u.pathname}${u.search}`, { replace: true, reset: false, refreshAll: true });
+	}
+	/** Where a retried line landed, once it has */
+	const landedIn = $derived(
+		live.retried.includes(rec.id) && st.kind === 'done'
+			? (rec.deliveries.find((d) => d.status === 'sent')?.target ?? null)
+			: null
+	);
 
 	/** Shows More only when the clamp hides something */
 	function clamp(node: HTMLElement) {
@@ -60,7 +99,7 @@
 	/** A tap anywhere on the row that is not a control, and not a text selection, opens it */
 	function openRow(e: MouseEvent) {
 		const t = e.target as HTMLElement;
-		if (t.closest('a, button, form, input, label, .iprog, dialog')) return;
+		if (t.closest('a, button, form, input, label, dialog')) return;
 		if (window.getSelection()?.toString()) return;
 		if (e.metaKey || e.ctrlKey) window.open(href, '_blank');
 		else goto(href);
@@ -85,12 +124,14 @@
 	};
 </script>
 
-{#snippet text(t: string)}
+{#snippet text(full: string)}
+	{@const ex = excerpt(full)}
 	<div class="e-xw">
-		<p class="e-x" class:clamped={!open && !hit} use:clamp>
-			{#each parts(t) as p, i (i)}{#if p.m}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
+		<p class="e-x" class:clamped={!open} use:clamp>
+			{#each parts(ex.text) as p, i (i)}{#if p.m}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
 		</p>
-		{#if !hit && (over || open)}
+		<!-- Folded: More sits at the end of the last line, over a fade. Open: Less follows the text -->
+		{#if over || open || ex.cut}
 			<button
 				type="button"
 				class="e-more"
@@ -104,10 +145,9 @@
 
 {#snippet progress()}
 	{#if showProgress}
-		<div class="iprog">
-			<Waveform id={rec.id} durationMs={rec.durationMs} class="iwave" height={18} />
-			<span class="itime">{formatDuration(audio.time * 1000)}</span>
-		</div>
+		<span class="e-prog" aria-hidden="true"
+			><i style:transform="scaleX({audio.progress(rec.id, rec.durationMs)})"></i></span
+		>
 	{/if}
 {/snippet}
 
@@ -131,8 +171,10 @@
 	<div class="e-b">
 		{#if rec.transcript?.trim()}
 			{@render text(rec.transcript)}
-		{:else if st.kind === 'waiting' || st.kind === 'transcribing'}
-			<p class="e-x e-ph" aria-hidden="true"><span class="hk-skeleton"></span></p>
+		{:else if st.kind === 'waiting'}
+			<p class="e-x e-ph e-live"><span class="idle" aria-hidden="true"></span>Waiting</p>
+		{:else if st.kind === 'transcribing'}
+			<p class="e-x e-ph e-live"><span class="spin" aria-hidden="true"></span>Transcribing</p>
 		{:else if st.kind === 'nospeech'}
 			<p class="e-x e-ph">No speech</p>
 		{:else}
@@ -151,7 +193,7 @@
 						title="Delete the {time} recording"
 						triggerClass="hk-btn-ghost hk-btn-sm e-act"
 					>
-						<p>Audio and transcript go.</p>
+						<p>Deletes the audio and transcript.</p>
 					</ConfirmAction>
 				{:else}
 					<form
@@ -168,10 +210,11 @@
 										await goto(result.location);
 									} else if (result.type === 'error') {
 										await applyAction(result);
-									} else {
-										if (result.type === 'failure')
-											retryError = String(result.data?.error ?? 'Retry failed');
+									} else if (result.type === 'failure') {
+										retryError = String(result.data?.error ?? 'Retry failed');
 										await refreshAll();
+									} else {
+										await retried();
 									}
 								} finally {
 									pending = false;
@@ -191,18 +234,25 @@
 				{/if}
 			</div>
 			{#if retryError}<p class="e-s e-s--err" role="alert">{retryError}</p>{/if}
-		{:else if st.kind === 'waiting'}
-			<p class="e-s"><span class="idle" aria-hidden="true"></span>Waiting</p>
-		{:else if st.kind === 'transcribing'}
-			<p class="e-s"><span class="spin" aria-hidden="true"></span>Transcribing</p>
+		{:else if (st.kind === 'waiting' || st.kind === 'transcribing') && rec.transcript?.trim()}
+			<p class="e-s">
+				<span class={st.kind === 'waiting' ? 'idle' : 'spin'} aria-hidden="true"></span>{st.kind ===
+				'waiting'
+					? 'Waiting'
+					: 'Transcribing'}
+			</p>
 		{:else if st.kind === 'sending'}
 			<p class="e-s"><span class="spin" aria-hidden="true"></span>Sending to the note</p>
-		{:else}
+		{:else if landedIn}
+			<p class="e-s e-s--ok">
+				<Icon name="check" size={14} class="ok-check" />In <span class="path">{landedIn}</span>
+			</p>
+		{:else if st.kind !== 'waiting' && st.kind !== 'transcribing'}
 			{@render metaLine()}
 		{/if}
-		{@render progress()}
 	</div>
 	{#if rec.hasAudio && rec.durationMs != null}
 		<PlayPill id={rec.id} durationMs={rec.durationMs} />
 	{/if}
+	{@render progress()}
 </li>

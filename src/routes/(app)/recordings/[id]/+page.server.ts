@@ -12,7 +12,7 @@ import {
 	readNoteCached
 } from '#lib/server/journal.ts';
 import { entryRaw, parseNote, sectionOf } from '#lib/notes/sheet.ts';
-import { dayKey } from '#lib/format.ts';
+import { dayKey, formatTime } from '#lib/format.ts';
 import {
 	integrationMatches,
 	listIntegrations,
@@ -116,10 +116,12 @@ export const load: PageServerLoad = async ({ params, url }) => {
 				task: boolean | null;
 				mark: 'this' | 'pending' | null;
 			};
-			const mine = parseNote(entryText).find((b) => b.type !== 'heading');
+			const said = !!rec.transcript?.trim();
+			const mine = said ? parseNote(entryText).find((b) => b.type !== 'heading') : undefined;
 			const own: Line = {
-				time: mine?.time ?? null,
-				text: mine?.text ?? rec.transcript ?? '',
+				// No words yet: the line is its time alone, the page says the rest
+				time: said ? (mine?.time ?? null) : formatTime(rec.recordedAt, timeZone),
+				text: said ? (mine?.text ?? rec.transcript ?? '') : '',
 				task: null,
 				mark: sent ? 'this' : 'pending'
 			};
@@ -131,7 +133,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			if (blocks) {
 				const items = blocks.filter((b) => b.type !== 'heading');
 				const want = entryRaw(entryText);
-				let at = sent ? items.findIndex((b) => b.raw === want) : -1;
+				// The line may be written already while its send is still unconfirmed: mark it in
+				// place rather than show it twice
+				let at = items.findIndex((b) => b.raw === want);
 				if (sent && at < 0 && own.time) {
 					at = items.findIndex((b) => b.time === own.time);
 				}
@@ -141,10 +145,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 					task: b.task,
 					mark: null
 				}));
-				if (at >= 0) {
-					all[at] = { ...all[at]!, mark: sent ? 'this' : null };
-					if (!sent) at = -1;
-				}
+				if (at >= 0) all[at] = { ...all[at]!, mark: sent ? 'this' : 'pending' };
 				if (at < 0) {
 					// Not in the note: where the append would put it, by time
 					at = own.time ? all.findIndex((l) => l.time !== null && l.time > own.time!) : -1;

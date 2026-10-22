@@ -22,6 +22,8 @@
 		/** Posted as `<name>.clear=1` when Remove is pressed */
 		clearable?: boolean;
 		placeholder?: string;
+		/** id of the form the inputs post with, when they sit outside it */
+		form?: string;
 	}
 	let {
 		id,
@@ -33,7 +35,8 @@
 		invalid = false,
 		describedby,
 		clearable = false,
-		placeholder = 'Not set'
+		placeholder = 'Not set',
+		form
 	}: Props = $props();
 
 	let replacing = $state(false);
@@ -88,7 +91,7 @@
 			{/if}
 		</div>
 	{:else if cleared}
-		<input type="hidden" name="{name}.clear" value="1" />
+		<input type="hidden" name="{name}.clear" value="1" {form} />
 		<div class="state">
 			<span class="after grow" {id}>
 				{#if env}
@@ -108,6 +111,7 @@
 				bind:this={input}
 				{id}
 				{name}
+				{form}
 				class="hk-input hk-mono"
 				type="password"
 				autocomplete="off"

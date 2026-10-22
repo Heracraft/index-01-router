@@ -84,22 +84,23 @@ export function entryState(r: EntryRec): EntryState {
 	return text ? { kind: 'done' } : { kind: 'nospeech' };
 }
 
-/** The exceptions worth a muted word under a line. Ordinary lines get none */
+/**
+ * The one exception worth a muted word under a settled line: words that never reached a note,
+ * an edit after sending, or several languages, in that order. Ordinary lines get none. How it
+ * came in (trigger, upload, phone transcript) is for the recording's Details
+ */
 export function entryMeta(r: EntryRec): string[] {
-	const out: string[] = [];
-	if (r.trigger === 'double-click-hold') out.push('Double click');
-	if (r.trigger === 'upload') out.push('Upload');
-	if (r.transcribedBy === 'index-app') out.push('App transcript');
-	if (r.deliveries.some((d) => d.status === 'sent' && d.stale)) out.push('Edited');
+	const text = !!r.transcript?.trim();
 	if (
+		text &&
 		r.status === 'done' &&
-		r.transcript?.trim() &&
 		r.deliveries.length > 0 &&
 		!r.deliveries.some((d) => d.status === 'sent')
 	)
-		out.push('Not sent');
-	if (r.languages.length > 1) out.push(r.languages.map(languageName).join(', '));
-	return out;
+		return ['Not sent'];
+	if (r.deliveries.some((d) => d.status === 'sent' && d.stale)) return ['Edited'];
+	if (r.languages.length > 1) return [r.languages.map(languageName).join(', ')];
+	return [];
 }
 
 /** Deterministic bar heights (0.2 to 1) from an id, for a waveform before real peaks load */

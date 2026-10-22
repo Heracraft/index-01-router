@@ -10,7 +10,7 @@ import { onChange } from './pipeline.ts';
 import { dayKey, parseLanguages, startOfDay } from '../format.ts';
 import { renderNotePath } from '../notes/template.ts';
 import { parseNote, sectionOf } from '../notes/sheet.ts';
-import { mergeSheet } from '../notes/merge.ts';
+import { mergeSheet, otherSections, type SheetSection } from '../notes/merge.ts';
 import type { EntryDelivery, EntryRec } from '../entry.ts';
 import type { Integration } from './db/schema.ts';
 
@@ -284,13 +284,34 @@ export async function loadDay(key: string, timeZone: string, month: string | nul
 	const path = integration ? notePathFor(integration, key, timeZone) : null;
 	const read: NoteRead | null =
 		integration && path && integration.enabled ? await readNoteCached(integration, path) : null;
-	const blocks =
-		read?.state === 'ok' && config ? sectionOf(parseNote(read.content), config.heading) : null;
-	const lines = mergeSheet(recs, blocks, {
-		path,
-		entryTemplate: config?.entryTemplate ?? '',
-		timeZone
-	});
+	const parsed = read?.state === 'ok' && config ? parseNote(read.content) : null;
+	const blocks = parsed && config ? sectionOf(parsed, config.heading) : null;
+	// Lines that landed under another heading of the note (the heading setting changed since)
+	// show under that heading, as the note reads
+	const others =
+		parsed && config
+			? otherSections(recs, parsed, config.heading, {
+					entryTemplate: config.entryTemplate,
+					timeZone
+				})
+			: { sections: [] as SheetSection[], at: 0, used: new Set<string>() };
+	const lines = mergeSheet(
+		recs.filter((r) => !others.used.has(r.id)),
+		blocks,
+		{ path, entryTemplate: config?.entryTemplate ?? '', timeZone }
+	);
+	// The configured heading is in the note, or today's first line will write it there. A note
+	// that could not be read keeps it: nothing says otherwise
+	const inNote =
+		blocks !== null ||
+		read?.state === 'unreachable' ||
+		!read ||
+		(read.state === 'missing' && key === today);
+	const sections: (SheetSection & { main: boolean; inNote: boolean })[] = others.sections.map(
+		(x) => ({ ...x, main: false, inNote: true })
+	);
+	if (sections.length)
+		sections.splice(others.at, 0, { heading: config!.heading, lines, main: true, inNote });
 
 	return {
 		day: key,
@@ -302,10 +323,14 @@ export async function loadDay(key: string, timeZone: string, month: string | nul
 					path,
 					link: path ? obsidianLink(path) : null,
 					heading: config.heading,
+					/** False when the note was read and has no such heading */
+					hasHeading: inNote,
 					state: read?.state ?? 'off'
 				}
 			: null,
 		lines,
+		/** The note's sections with lines in them, when there is more than the configured one */
+		sections,
 		calendar: { month: shownMonth, prevMonth, nextMonth, dots },
 		week: { start: weekStart, end: weekEnd },
 		needs

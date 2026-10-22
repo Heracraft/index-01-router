@@ -3,13 +3,14 @@
 	/* The ring's webhook: URL, signing secret, the unsigned switch, and only the rejections */
 	import { enhance } from '$app/forms';
 	import ConfirmAction from './ConfirmAction.svelte';
+	import RequestRow from './RequestRow.svelte';
 	import CopyButton from './CopyButton.svelte';
 	import Icon from './Icon.svelte';
 	import SaveBar from './SaveBar.svelte';
 	import Switch from './Switch.svelte';
 	import { sectionSubmit } from './section-submit.ts';
 	import type { DirtyForms } from './dirty.svelte.ts';
-	import { dayKey, formatBytes, formatDay, formatTime } from '#lib/format.ts';
+	import { dayKey, formatDay, formatTime } from '#lib/format.ts';
 
 	interface Props {
 		ring: {
@@ -40,6 +41,8 @@
 		!!ring.rotatedAt && (!ring.last || new Date(ring.rotatedAt) > new Date(ring.last.at))
 	);
 	const submit = $derived(sectionSubmit(dirty, 'ring', { result: () => {} }));
+	/** Red only while a rejection is fresh enough to act on; older ones are history */
+	const recent = (at: Date | string) => Date.now() - new Date(at).getTime() < 60 * 60 * 1000;
 </script>
 
 <section class="sset" id="ring" aria-labelledby="ring-h">
@@ -61,7 +64,7 @@
 	<div class="f">
 		<span class="hk-field-label" id="url-label">Webhook URL</span>
 		<div class="hk-secret" aria-labelledby="url-label">
-			<span class="scroll url">{ring.webhookUrl}</span>
+			<span class="url" title={ring.webhookUrl}>{ring.webhookUrl}</span>
 			<CopyButton text={ring.webhookUrl} label="Copy" />
 		</div>
 	</div>
@@ -129,12 +132,13 @@
 		<h3 class="sub">Rejected <span class="cnt">{ring.rejected.length}</span></h3>
 		<ul class="rej">
 			{#each ring.rejected.slice(0, 6) as e (e.id)}
-				<li>
-					<span class="r-t">{when(e.at)}</span>
-					<span class="r-m">{capital(e.reason)}</span>
-					<span class="obadge err">{e.status}</span>
-					<span class="r-s">{e.bytes ? formatBytes(e.bytes) : ''}</span>
-				</li>
+				<RequestRow
+					time={when(e.at)}
+					lead={capital(e.reason)}
+					tone={recent(e.at) ? 'err' : 'dim'}
+					code={e.status}
+					bytes={e.bytes}
+				/>
 			{/each}
 		</ul>
 	{/if}
@@ -159,6 +163,15 @@
 	}
 	.small {
 		font-size: 0.875rem;
+	}
+	.rej {
+		--rq-t: 7rem;
+		--rq-a: 0px;
+	}
+	@media (max-width: 639.98px) {
+		.rej {
+			--rq-t: 5.75rem;
+		}
 	}
 	/* Read-only field: the input's height, surface-2, actions inside on the right */
 	.hk-secret {
@@ -190,6 +203,10 @@
 		height: 14px;
 	}
 	.url {
-		word-break: normal;
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
 	}
 </style>

@@ -11,6 +11,10 @@
 	let { id, durationMs }: Props = $props();
 	const on = $derived(audio.isPlaying(id));
 	const dur = $derived(formatDuration(durationMs));
+	// While this line plays, or sits paused part way, the pill counts the time instead
+	const shown = $derived(
+		audio.id === id && (audio.playing || audio.time > 0) ? formatDuration(audio.time * 1000) : dur
+	);
 </script>
 
 <button
@@ -25,5 +29,5 @@
 	}}
 >
 	<Icon name={on ? 'pause' : 'play'} size={10} />
-	{#if dur}<span>{dur}</span>{/if}
+	{#if dur}<span>{shown}</span>{/if}
 </button>

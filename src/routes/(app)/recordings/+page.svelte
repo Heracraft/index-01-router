@@ -31,8 +31,7 @@
 			}
 			g.rows.push(r);
 		}
-		// Days newest first; inside a day, the order the note reads
-		for (const g of out) g.rows.reverse();
+		// Newest first throughout, as on Requests; the day sheet keeps the note's order
 		return out;
 	});
 	const base = resolve('/(app)/recordings');
@@ -68,7 +67,7 @@
 <svelte:head><title>{data.q ? `${data.q} · ` : ''}Search · Index 01</title></svelte:head>
 
 <div class="shell">
-	<Rail day={null} today={data.rail.today} calendar={data.rail.calendar} />
+	<Rail day={null} today={data.rail.today} calendar={data.rail.calendar} needs={data.rail.needs} />
 	<main id="main" class="col" tabindex="-1">
 		<h1 class="hk-sr">Search</h1>
 		<form
@@ -107,23 +106,22 @@
 				>
 			{/if}
 		</form>
+		<!-- Every tab always: the row stays put while the counts change under your typing -->
 		<nav class="tabs" aria-label="Show">
 			{#each FILTERS as f (f.id)}
-				{#if f.id === 'all' || f.n() > 0 || data.filter === f.id}
-					<a
-						href="{base}{qs({ status: f.id === 'all' ? null : f.id, before: null })}"
-						class:cur={data.filter === f.id}
-						aria-current={data.filter === f.id ? 'page' : undefined}
-						>{f.label}<span class="tab-n">{f.n()}</span></a
-					>
-				{/if}
+				<a
+					href="{base}{qs({ status: f.id === 'all' ? null : f.id, before: null })}"
+					class:cur={data.filter === f.id}
+					aria-current={data.filter === f.id ? 'page' : undefined}
+					>{f.label}<span class="tab-n">{f.n()}</span></a
+				>
 			{/each}
 		</nav>
 
 		{#if data.recs.length === 0}
-			<p class="muted">
+			<p class="muted none">
 				{data.q
-					? `Nothing matches "${data.q}"`
+					? `Nothing matches “${data.q}”`
 					: data.before
 						? 'No older recordings'
 						: 'Nothing here'}
@@ -163,6 +161,9 @@
 </div>
 
 <style>
+	.none {
+		margin: 1.5rem 0 0;
+	}
 	.pager {
 		display: flex;
 		gap: 0.5rem;

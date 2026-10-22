@@ -114,14 +114,17 @@
 	let uploadForm = $state<HTMLFormElement>();
 	let uploading = $state(false);
 	let uploadError = $state<string | null>(null);
-	let lastModified = $state('');
 	function picked() {
-		const file = fileInput?.files?.[0];
-		if (!file) return;
-		lastModified = String(file.lastModified);
-		// Wait a tick so the hidden lastModified input carries the new value
-		queueMicrotask(() => uploadForm?.requestSubmit());
+		if (!fileInput?.files?.[0]) return;
+		uploadForm?.requestSubmit();
 	}
+	// A failed upload says so beside the button for a few seconds, then goes
+	let errTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		clearTimeout(errTimer);
+		if (uploadError) errTimer = setTimeout(() => (uploadError = null), 6000);
+		return () => clearTimeout(errTimer);
+	});
 
 	let scrollY = $state(0);
 	const onSettings = $derived(page.url.pathname.startsWith('/settings'));
@@ -143,6 +146,12 @@
 			<span class="wordmark">Index 01</span>
 		</a>
 		<div class="top-act">
+			{#if uploadError}
+				<span class="uperr" role="alert"
+					><span class="fdot" aria-hidden="true"></span><span class="uperr-t">{uploadError}</span
+					></span
+				>
+			{/if}
 			{#if down}
 				<button type="button" class="offline" onclick={() => reconnect()}
 					><span class="dot idle" aria-hidden="true"></span>Offline</button
@@ -175,7 +184,8 @@
 								/^\d{4}-\d{2}-\d{2}$/.test(day) && day !== result.data.today
 									? resolve('/(app)/day/[date]', { date: day })
 									: resolve('/(app)'),
-								{ invalidateAll: true }
+								// The marked line scrolls itself into view; a reset to the top would undo it
+								{ invalidateAll: true, reset: false }
 							);
 						} else if (result.type === 'failure') {
 							uploadError = String(result.data?.upload ?? 'Upload failed');
@@ -194,7 +204,6 @@
 					aria-hidden="true"
 					onchange={picked}
 				/>
-				<input type="hidden" name="lastModified" value={lastModified} />
 				<button
 					type="button"
 					class="hk-btn-ghost iconbtn"
@@ -216,16 +225,8 @@
 	</div>
 </header>
 
-{#if uploadError || data.lostKeys.length || data.lostIntegrations.length || data.webhookSecretReset}
+{#if data.lostKeys.length || data.lostIntegrations.length || data.webhookSecretReset}
 	<div class="banners">
-		{#if uploadError}
-			<p class="hk-banner hk-banner--err" role="alert">
-				<span>{uploadError}</span>
-				<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (uploadError = null)}
-					>Dismiss</button
-				>
-			</p>
-		{/if}
 		{#if data.lostKeys.length || data.lostIntegrations.length || data.webhookSecretReset}
 			<div class="hk-banner secret-banner" role="alert">
 				<p class="banner-head">AUTH_SECRET changed</p>
@@ -264,6 +265,21 @@
 		max-width: var(--page-max);
 		margin: 1rem auto 0;
 		padding: 0 1.25rem;
+	}
+	.uperr {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
+		margin-right: 0.5rem;
+		font-size: 0.8125rem;
+		color: var(--hk-err);
+	}
+	.uperr-t {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.banners :global(.hk-banner) {
 		display: flex;

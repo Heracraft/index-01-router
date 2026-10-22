@@ -18,7 +18,19 @@
 	const weekDays = $derived(Array.from({ length: 7 }, (_, i) => addDays(data.week.start, i)));
 	const dayHref = (key: string) =>
 		key === data.today ? resolve('/(app)') : resolve('/(app)/day/[date]', { date: key });
-	const empty = $derived(data.lines.length === 0);
+	// One section: the header names its heading. Several: each shows its own, as the note reads
+	const split = $derived(data.sections.length > 0);
+	const sections = $derived(
+		split
+			? data.sections.filter((x) => x.lines.length)
+			: [{ heading: data.note?.heading ?? 'Notes', lines: data.lines, main: true, inNote: true }]
+	);
+	const empty = $derived(sections.every((x) => x.lines.length === 0));
+	/** A week on, but never past today */
+	const nextWeekDay = $derived.by(() => {
+		const d = addDays(data.day, 7);
+		return d > data.today ? data.today : d;
+	});
 </script>
 
 <nav class="week" aria-label="Days">
@@ -41,6 +53,13 @@
 				></b>{/if}</a
 		>
 	{/each}
+	{#if data.week.end < data.today}
+		<a class="hk-btn-ghost iconbtn" href={dayHref(nextWeekDay)} aria-label="Week after"
+			><Icon name="right" /></a
+		>
+	{:else}
+		<span class="hk-btn-ghost iconbtn off" aria-hidden="true"><Icon name="right" /></span>
+	{/if}
 </nav>
 
 <div class="shell">
@@ -60,9 +79,8 @@
 				<div class="sh-t">
 					<h1 class="hk-h1-app dh-t">{title}</h1>
 					{#if data.note?.path}
-						<p class="path">
-							{data.note.path}<span class="path-h">{` › ${data.note.heading}`}</span>
-						</p>
+						<!-- The note alone, the same every day: headings show in the sheet when there are several -->
+						<p class="path">{data.note.path}</p>
 					{/if}
 				</div>
 				{#if data.note?.link}
@@ -85,33 +103,49 @@
 							aria-label={longDay(data.next)}
 							title={shortDay(data.next)}><Icon name="right" size={18} /></a
 						>
+					{:else}
+						<span class="hk-btn-ghost iconbtn off" aria-hidden="true"
+							><Icon name="right" size={18} /></span
+						>
 					{/if}
 				</nav>
 			</header>
 			<div class="sheet-body">
-				<h2 class="hk-sr">{data.note?.heading ?? 'Notes'}</h2>
 				{#if empty}
+					<h2 class="hk-sr">{data.note?.heading ?? 'Notes'}</h2>
 					<p class="sheet-empty">{rel === 'Today' ? 'Nothing yet today' : 'Nothing this day'}</p>
 				{:else}
-					<ul class="notes">
-						{#each data.lines as line (line.key)}
-							{#if line.type === 'typed'}
-								<li class="e e--typed">
-									<span class="e-t">{line.time ?? ''}</span>
-									<div class="e-b">
-										<p class="e-x">
-											{#if line.task !== null}<span class="task" class:on={line.task}
-												></span>{/if}{line.text}
-										</p>
-									</div>
-								</li>
-							{:else}
-								<EntryRow rec={line.rec} {tz} />
-							{/if}
-						{/each}
-					</ul>
+					{#each sections as sec (sec.heading)}
+						<!-- Every heading in one style, as the note will read once its first line lands -->
+						<h2 class={split ? 'nh sec-nh' : 'hk-sr'}>
+							{sec.heading}
+						</h2>
+						<ul class="notes">
+							{#each sec.lines as line (line.key)}
+								{#if line.type === 'typed'}
+									<li class="e e--typed">
+										<span class="e-t">{line.time ?? ''}</span>
+										<div class="e-b">
+											<p class="e-x">
+												{#if line.task !== null}<span class="task" class:on={line.task}
+													></span>{/if}{line.text}
+											</p>
+										</div>
+									</li>
+								{:else}
+									<EntryRow rec={line.rec} {tz} />
+								{/if}
+							{/each}
+						</ul>
+					{/each}
 				{/if}
 			</div>
 		</article>
 	</main>
 </div>
+
+<style>
+	.sec-nh:not(:first-child) {
+		margin-top: 1.5rem;
+	}
+</style>

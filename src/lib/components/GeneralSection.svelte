@@ -40,7 +40,7 @@
 				aria-invalid={!!error || undefined}
 			>
 				{#each general.timeZones as z (z)}
-					<option value={z}>{z.replaceAll('_', ' ')}</option>
+					<option value={z} selected={z === general.timezone}>{z.replaceAll('_', ' ')}</option>
 				{/each}
 			</select>
 		</span>

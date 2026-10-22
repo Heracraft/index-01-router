@@ -28,7 +28,7 @@
 			if (pending) return;
 			saved = true;
 			clearTimeout(timer);
-			timer = setTimeout(() => (saved = false), 1800);
+			timer = setTimeout(() => (saved = false), 2400);
 		});
 	});
 	$effect(() => {

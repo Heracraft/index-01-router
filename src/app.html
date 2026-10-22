@@ -11,6 +11,12 @@
 			try {
 				var t = localStorage.getItem('hk-theme');
 				if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+				// The server reads the choice from this cookie, so the toggle renders it before paint
+				var c = (document.cookie.match(/(?:^|; )hk-theme=(\w+)/) || [])[1] || '';
+				if ((t || '') !== c)
+					document.cookie = t
+						? 'hk-theme=' + t + '; path=/; max-age=31536000; samesite=lax'
+						: 'hk-theme=; path=/; max-age=0; samesite=lax';
 			} catch (e) {}
 		</script>
 		<link rel="preconnect" href="https://fonts.googleapis.com" />

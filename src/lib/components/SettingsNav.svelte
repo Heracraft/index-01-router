@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import Icon from './Icon.svelte';
 	/* Settings sections in the rail. A dot marks only a section with a problem */
 	interface Item {
 		id: string;
@@ -13,8 +14,6 @@
 	}
 	let { items, current }: Props = $props();
 	const settings = resolve('/(app)/settings');
-	/** Phone tabs: short enough for one row at 360px */
-	const SHORT: Record<string, string> = { note: 'Note', transcription: 'Transcribe' };
 </script>
 
 <aside class="rail">
@@ -43,9 +42,11 @@
 <nav class="snav-m" aria-label="Settings sections">
 	{#each items as s (s.id)}
 		<a href="{settings}#{s.id}" class:cur={current === s.id}
-			>{SHORT[s.id] ?? s.label}{#if s.tone}<span class="sdot {s.tone}" aria-hidden="true"
-				></span>{/if}</a
+			>{s.label}{#if s.tone}<span class="sdot {s.tone}" aria-hidden="true"></span>{/if}</a
 		>
 	{/each}
-	<a href={resolve('/(app)/settings/requests')} class:cur={current === 'requests'}>Requests</a>
+	<span class="snav-m-sep" aria-hidden="true"></span>
+	<a href={resolve('/(app)/settings/requests')} class:cur={current === 'requests'}
+		>Requests<Icon name="right" size={14} /></a
+	>
 </nav>

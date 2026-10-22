@@ -14,7 +14,10 @@
 	let { id, durationMs, class: cls = 'wave', height = 36 }: Props = $props();
 
 	let width = $state(0);
-	const heights = $derived(barsFor(id, Math.max(12, Math.min(160, Math.floor(width / 4)))));
+	// No bars until the track has a width: a guess would draw a few sticks spread across it
+	const heights = $derived(
+		width > 0 ? barsFor(id, Math.max(12, Math.min(160, Math.floor(width / 4)))) : []
+	);
 	const at = $derived(audio.progress(id, durationMs));
 	const total = $derived(audio.id === id && audio.duration ? audio.duration * 1000 : durationMs);
 
