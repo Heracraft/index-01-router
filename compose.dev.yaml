@@ -2,7 +2,7 @@
 #   pnpm db:up                                   Postgres + mock OIDC
 #   docker compose -f compose.dev.yaml --profile obsidian up -d
 #   docker compose -f compose.dev.yaml --profile whisper up -d
-name: index-01-router
+name: index-01-router-dev
 
 services:
   # postgres://root:pebble@localhost:5432/local
@@ -49,7 +49,12 @@ services:
       - >-
         set -e;
         m=/models/ggml-$${WHISPER_MODEL}.bin;
-        [ -s "$$m" ] || /app/models/download-ggml-model.sh "$${WHISPER_MODEL}" /models;
+        if [ ! -s "$$m" ]; then
+          rm -rf /models/.tmp; mkdir -p /models/.tmp;
+          /app/models/download-ggml-model.sh "$${WHISPER_MODEL}" /models/.tmp;
+          mv "/models/.tmp/ggml-$${WHISPER_MODEL}.bin" "$$m";
+          rm -rf /models/.tmp;
+        fi;
         exec whisper-server --host 0.0.0.0 --port 8080 -t "$${WHISPER_THREADS}" -m "$$m"
     environment:
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
@@ -59,6 +64,9 @@ services:
     volumes:
       - whisper-models:/models
 
+# Named after the project's old name, so data from before the rename stays
 volumes:
   pgdata:
+    name: index-01-router_pgdata
   whisper-models:
+    name: index-01-router_whisper-models

@@ -1,7 +1,7 @@
 // Recording pipeline: received -> transcribing -> routing -> done | failed.
 // In-process queue with two recordings in flight; rows left mid-way are resumed by startWorker.
 import { EventEmitter } from 'node:events';
-import { asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { db } from './db/index.ts';
 import {
 	deliveries,
@@ -11,8 +11,12 @@ import {
 	type Recording
 } from './db/schema.ts';
 import { getSettings, type GeneralSettings } from './settings.ts';
-import { absolutePath } from './storage.ts';
-import { transcribe as realTranscribe, TranscribeError } from './transcribe/index.ts';
+import { absolutePath, deleteAudio, listAudioFiles } from './storage.ts';
+import {
+	MAX_AUDIO_SECONDS,
+	transcribe as realTranscribe,
+	TranscribeError
+} from './transcribe/index.ts';
 import type { TranscribeInput, TranscribeResult } from './transcribe/types.ts';
 import { integrationMatches, kinds, listIntegrations, type Kind } from './integrations/index.ts';
 import { DeliverError } from './integrations/types.ts';
@@ -22,27 +26,42 @@ const CONCURRENCY = 2;
 const TRANSCRIBE_BACKOFF_MS = [2_000, 10_000];
 /** Deliveries: first try plus 3 retries of retryable errors */
 const DELIVERY_BACKOFF_MS = [2_000, 10_000, 30_000];
+/** Least time a transcription gets; longer recordings get more, see transcribeBudgetMs */
 const TRANSCRIBE_TIMEOUT_MS = 15 * 60_000;
 const DELIVER_TIMEOUT_MS = 2 * 60_000;
+/** Error on a row whose audio was never stored */
+export const INCOMPLETE_ERROR = 'Audio was not stored; resend from the Index app';
+/** Audio files without a row are deleted once older than this */
+const ORPHAN_AGE_MS = 60 * 60_000;
 /** Prefix of the note kept on a recording that fell back to the phone's transcript */
 const FALLBACK_NOTE = 'Used the app transcript';
 
 interface Deps {
 	transcribe: (input: TranscribeInput) => Promise<TranscribeResult>;
 	sleep: (ms: number) => Promise<void>;
+	/** Signal that aborts after `ms` with a TimeoutError */
+	deadline: (ms: number) => AbortSignal;
 }
 
 const deps: Deps = {
 	transcribe: (input) => realTranscribe(input),
-	sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+	sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+	deadline: (ms) => AbortSignal.timeout(ms)
 };
 
-/** Tests swap the transcriber and skip the backoff waits */
+/** Tests swap the transcriber, skip the backoff waits and shorten deadlines */
 export function _setPipelineDeps(over: Partial<Deps>) {
 	Object.assign(deps, over);
 }
 
-type Job = { id: string; from: 'auto' | 'transcribe' | 'route'; only?: string };
+type Job = {
+	id: string;
+	from: 'auto' | 'transcribe' | 'route';
+	/** Deliver this one delivery only */
+	only?: string;
+	/** Asked for from the UI: also deliver rows skipped while their integration was off */
+	manual?: boolean;
+};
 
 interface State {
 	events: EventEmitter;
@@ -52,6 +71,8 @@ interface State {
 	running: number;
 	idleWaiters: (() => void)[];
 	started: boolean;
+	/** Set on SIGTERM: queued jobs stay queued and resume on the next boot */
+	stopping?: boolean;
 }
 
 // On globalThis so a dev hot reload of this module keeps one queue instead of starting a second
@@ -81,7 +102,7 @@ const emit = (id: string) => {
 };
 
 function pump() {
-	while (state.running < CONCURRENCY && queue.length) {
+	while (!state.stopping && state.running < CONCURRENCY && queue.length) {
 		const job = queue.shift()!;
 		state.running++;
 		run(job)
@@ -93,17 +114,51 @@ function pump() {
 				pump();
 			});
 	}
-	if (!state.running && !queue.length) {
+	if (isIdle()) {
 		const waiters = state.idleWaiters;
 		state.idleWaiters = [];
 		for (const w of waiters) w();
 	}
 }
 
-/** Resolves once nothing is queued or running */
+/** Nothing running, and nothing queued unless stopping (queued jobs then wait for the next boot) */
+const isIdle = () => !state.running && (state.stopping || !queue.length);
+
+/** Resolves once nothing is queued or running. While stopping, once nothing is running */
 export function whenIdle(): Promise<void> {
-	if (!state.running && !queue.length) return Promise.resolve();
+	if (isIdle()) return Promise.resolve();
 	return new Promise((r) => state.idleWaiters.push(r));
+}
+
+/**
+ * Stops starting jobs, for a shutdown. Running ones finish; queued ones keep their status and
+ * startWorker resumes them on the next boot. Fires the onShutdown listeners once.
+ */
+export function stopAccepting(): void {
+	if (state.stopping) return;
+	state.stopping = true;
+	try {
+		events.emit('shutdown');
+	} catch (e) {
+		console.error('pipeline shutdown listener failed', e);
+	}
+	pump();
+}
+
+/** Runs `listener` when the server starts shutting down, at once if it already is. Returns unsubscribe */
+export function onShutdown(listener: () => void): () => void {
+	if (state.stopping) {
+		listener();
+		return () => {};
+	}
+	events.once('shutdown', listener);
+	return () => events.off('shutdown', listener);
+}
+
+/** Tests only: accept jobs again after stopAccepting */
+export function _resumeAccepting(): void {
+	state.stopping = false;
+	pump();
 }
 
 export const isProcessing = (recordingId: string) => busy.has(recordingId);
@@ -140,6 +195,32 @@ export function startWorker(): void {
 			state.started = false;
 			console.error('pipeline: could not resume recordings', e);
 		});
+	sweepOrphanAudio().catch((e) => console.error('pipeline: orphan audio sweep failed', e));
+}
+
+/**
+ * Deletes audio files, and temp files from interrupted writes, that no recording points to and
+ * that are older than an hour. They are left by a crash between the file write and the insert.
+ * Returns the deleted relative paths.
+ */
+export async function sweepOrphanAudio(now = Date.now()): Promise<string[]> {
+	const old = (await listAudioFiles()).filter((f) => now - f.mtimeMs > ORPHAN_AGE_MS);
+	const removed: string[] = [];
+	for (let i = 0; i < old.length; i += 500) {
+		const batch = old.slice(i, i + 500).map((f) => f.path);
+		const rows = await db
+			.select({ path: recordings.audioPath })
+			.from(recordings)
+			.where(inArray(recordings.audioPath, batch));
+		const used = new Set(rows.map((r) => r.path));
+		for (const rel of batch) {
+			if (used.has(rel)) continue;
+			await deleteAudio(rel);
+			removed.push(rel);
+		}
+	}
+	if (removed.length) console.log(`pipeline: deleted ${removed.length} orphaned audio files`);
+	return removed;
 }
 
 export async function retryRecording(
@@ -163,7 +244,7 @@ export async function retryRecording(
 		busy.delete(recordingId);
 		throw e;
 	}
-	push({ id: recordingId, from });
+	push({ id: recordingId, from, manual: from === 'route' });
 }
 
 export async function redeliver(deliveryId: string): Promise<void> {
@@ -189,10 +270,20 @@ async function load(id: string): Promise<Recording | undefined> {
 	return row;
 }
 
-async function setRecording(id: string, patch: Partial<Recording>): Promise<Recording> {
+async function setRecording(
+	id: string,
+	patch: Partial<Omit<Recording, 'transcriptVersion'>>
+): Promise<Recording> {
+	// A changed transcript gets a new version, so deliveries of the old text show as stale
+	const version =
+		patch.transcript === undefined
+			? {}
+			: {
+					transcriptVersion: sql`CASE WHEN ${recordings.transcript} IS DISTINCT FROM ${patch.transcript} THEN ${recordings.transcriptVersion} + 1 ELSE ${recordings.transcriptVersion} END`
+				};
 	const [row] = await db
 		.update(recordings)
-		.set({ ...patch, updatedAt: new Date() })
+		.set({ ...patch, ...version, updatedAt: new Date() })
 		.where(eq(recordings.id, id))
 		.returning();
 	emit(id);
@@ -211,7 +302,25 @@ async function setDelivery(
 	emit(d.recordingId);
 }
 
-const fallbackNote = (error: string | null) => (error?.startsWith(FALLBACK_NOTE) ? error : null);
+/**
+ * Time allowed for one transcription attempt: the recording's length (three times that for a
+ * local whisper.cpp on CPU), at least 15 minutes. Without a probed duration the length is
+ * estimated from the file size at 16 KB per second.
+ */
+export function transcribeBudgetMs(
+	rec: Pick<Recording, 'durationMs' | 'audioBytes'>,
+	provider: string
+): number {
+	const audioMs = rec.durationMs ?? ((rec.audioBytes ?? 0) / 16_000) * 1000;
+	const factor = provider === 'whisper-cpp' ? 3 : 1;
+	return Math.min(MAX_AUDIO_SECONDS * 3 * 1000, Math.max(TRANSCRIBE_TIMEOUT_MS, audioMs * factor));
+}
+
+/** The fallback note in an error, alone or after "N of M deliveries failed. " */
+function fallbackNote(error: string | null) {
+	const at = error?.indexOf(FALLBACK_NOTE) ?? -1;
+	return at === 0 || (at > 0 && error!.slice(0, at).endsWith('. ')) ? error!.slice(at) : null;
+}
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e)) || 'Unknown error';
 
@@ -219,7 +328,7 @@ async function run(job: Job) {
 	let rec = await load(job.id);
 	if (!rec) return;
 	if (job.from === 'route') {
-		await route(rec, job.only);
+		await route(rec, job.only, job.manual);
 		return;
 	}
 	if (job.from === 'transcribe' || rec.status === 'received' || rec.status === 'transcribing') {
@@ -230,6 +339,21 @@ async function run(job: Job) {
 
 async function transcribeStep(rec: Recording): Promise<Recording> {
 	const app = rec.appTranscript?.trim() || null;
+	if (!rec.audioPath && rec.audioMime) {
+		// Audio was expected but never stored (a crash during ingest in an older version). Fail
+		// it so a resend from the Index app can attach the audio; the WHERE leaves a row alone
+		// that such a resend completed meanwhile, and this job then transcribes it.
+		const [failed] = await db
+			.update(recordings)
+			.set({ status: 'failed', error: INCOMPLETE_ERROR, updatedAt: new Date() })
+			.where(and(eq(recordings.id, rec.id), isNull(recordings.audioPath)))
+			.returning();
+		emit(rec.id);
+		if (failed) return failed;
+		const fresh = await load(rec.id);
+		if (!fresh?.audioPath) throw new Error(`Recording ${rec.id} vanished`);
+		rec = fresh;
+	}
 	if (!rec.audioPath) {
 		if (!app)
 			return setRecording(rec.id, { status: 'failed', error: 'No audio and no transcript' });
@@ -253,13 +377,15 @@ async function transcribeStep(rec: Recording): Promise<Recording> {
 				error: attempt ? rec.error : null
 			});
 			const started = performance.now();
+			const budgetMs = transcribeBudgetMs(rec, settings.provider);
+			const deadline = deps.deadline(budgetMs);
 			try {
 				const result = await deps.transcribe({
 					path: absolutePath(rec.audioPath!),
 					mime: rec.audioMime ?? 'audio/mp4',
 					durationMs: rec.durationMs,
 					settings,
-					signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT_MS)
+					signal: deadline
 				});
 				const transcribeMs = Math.round(performance.now() - started);
 				const text = result.text.trim();
@@ -285,6 +411,11 @@ async function transcribeStep(rec: Recording): Promise<Recording> {
 					error: null
 				});
 			} catch (e) {
+				// Starting over from scratch would run into the same limit
+				if (deadline.aborted) {
+					failure = `Transcription took longer than ${Math.round(budgetMs / 60_000)} min`;
+					break;
+				}
 				failure = messageOf(e);
 				const retryable = !(e instanceof TranscribeError) || e.retryable;
 				if (!retryable || attempt >= TRANSCRIBE_BACKOFF_MS.length) break;
@@ -311,7 +442,7 @@ function useApp(rec: Recording, app: string, reason: string) {
 	});
 }
 
-async function route(rec: Recording, only?: string) {
+async function route(rec: Recording, only?: string, manual = false) {
 	if (!rec.transcript?.trim()) {
 		await setRecording(rec.id, {
 			status: rec.status === 'done' ? 'done' : 'failed',
@@ -350,7 +481,9 @@ async function route(rec: Recording, only?: string) {
 	const todo = rows.filter(
 		(d) =>
 			byId.has(d.integrationId) &&
-			(only ? d.id === only : d.status === 'pending' || d.status === 'failed')
+			(only
+				? d.id === only
+				: d.status === 'pending' || d.status === 'failed' || (manual && d.status === 'skipped'))
 	);
 	await Promise.all(todo.map((d) => deliver(d, byId.get(d.integrationId)!, rec, general)));
 
@@ -358,19 +491,38 @@ async function route(rec: Recording, only?: string) {
 		.select({ status: deliveries.status })
 		.from(deliveries)
 		.where(eq(deliveries.recordingId, rec.id));
-	const failed = after.filter((d) => d.status === 'failed' || d.status === 'pending').length;
-	const note = fallbackNote(rec.error);
-	await setRecording(rec.id, {
-		status: failed ? 'failed' : 'done',
-		error: failed
-			? [
-					`${failed} of ${after.length} ${after.length === 1 ? 'delivery' : 'deliveries'} failed`,
-					note
-				]
-					.filter(Boolean)
-					.join('. ')
-			: note
-	});
+	await setRecording(rec.id, routedState(after, rec.error));
+}
+
+/** Status and error of a recording once its deliveries are settled. Keeps the fallback note */
+function routedState(
+	rows: Pick<Delivery, 'status'>[],
+	error: string | null
+): Pick<Recording, 'status' | 'error'> {
+	const failed = rows.filter((d) => d.status === 'failed' || d.status === 'pending').length;
+	const note = fallbackNote(error);
+	if (!failed) return { status: 'done', error: note };
+	const what = `${failed} of ${rows.length} ${rows.length === 1 ? 'delivery' : 'deliveries'} failed`;
+	return { status: 'failed', error: [what, note].filter(Boolean).join('. ') };
+}
+
+/**
+ * Recomputes failed recordings after an integration and its deliveries were deleted, so one
+ * whose only failures went with it ends `done`. Recordings with a job running are left to it.
+ */
+export async function settleAfterIntegrationDelete(recordingIds: string[]): Promise<void> {
+	for (const id of new Set(recordingIds)) {
+		if (busy.has(id)) continue;
+		const rec = await load(id);
+		if (!rec || rec.status !== 'failed' || !rec.transcript?.trim()) continue;
+		const rows = await db
+			.select({ status: deliveries.status })
+			.from(deliveries)
+			.where(eq(deliveries.recordingId, id));
+		// A job may have taken it while the deliveries were read
+		if (busy.has(id)) continue;
+		await setRecording(id, routedState(rows, rec.error));
+	}
 }
 
 async function deliver(
@@ -387,9 +539,16 @@ async function deliver(
 				recording: rec,
 				config: integration.config,
 				general,
-				signal: AbortSignal.timeout(DELIVER_TIMEOUT_MS)
+				signal: AbortSignal.timeout(DELIVER_TIMEOUT_MS),
+				// d.attempts is the count before this run: a resend or a resumed job is not first
+				firstAttempt: attempt === 0 && d.attempts === 0
 			});
-			await setDelivery(d, { status: 'sent', target: result.target, error: null });
+			await setDelivery(d, {
+				status: 'sent',
+				target: result.target,
+				error: null,
+				sentVersion: rec.transcriptVersion
+			});
 			return;
 		} catch (e) {
 			const message = messageOf(e);

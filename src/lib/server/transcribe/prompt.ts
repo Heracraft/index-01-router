@@ -13,7 +13,11 @@ function names() {
 	for (const x of a)
 		for (const y of a) {
 			const name = dn.of(x + y);
-			if (name) byName.set(name.toLowerCase(), x + y);
+			if (!name) continue;
+			byName.set(name.toLowerCase(), x + y);
+			// 'Māori' also as 'maori'
+			const plain = name.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+			if (!byName.has(plain)) byName.set(plain, x + y);
 		}
 	// Names Whisper uses that ICU spells differently
 	for (const [n, c] of [
@@ -28,7 +32,14 @@ function names() {
 		['valencian', 'ca'],
 		['kiswahili', 'sw'],
 		['mandarin', 'zh'],
-		['cantonese', 'zh']
+		['cantonese', 'zh'],
+		['maori', 'mi'],
+		['bengali', 'bn'],
+		['nynorsk', 'nn'],
+		['myanmar', 'my'],
+		['burmese', 'my'],
+		['tagalog', 'tl'],
+		['hawaiian', 'haw']
 	])
 		byName.set(n, c);
 	return byName;
@@ -100,7 +111,10 @@ export function llmInstructions(settings: Pick<TranscriptionSettings, 'languages
 
 export const llmUserText = 'Transcribe this recording verbatim. Reply with the JSON object only.';
 
-/** JSON schema for Gemini's responseSchema (OpenAPI subset) */
+/**
+ * JSON schema for Gemini's responseSchema (OpenAPI subset). The REST examples spell types in
+ * upper case ('OBJECT'); the API accepts these lower case names too.
+ */
 export const transcriptSchema = {
 	type: 'object',
 	properties: {

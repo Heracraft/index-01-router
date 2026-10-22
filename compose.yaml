@@ -10,22 +10,27 @@ services:
   app:
     build: .
     restart: unless-stopped
+    # Running recordings get 20s to finish after SIGTERM, then the app exits
+    stop_grace_period: 30s
     environment:
       # Coolify routes this service's domain to port 3000
       - SERVICE_URL_APP_3000
       - PUBLIC_URL=${SERVICE_URL_APP:-}
       - DATABASE_URL=postgres://${SERVICE_USER_POSTGRES}:${SERVICE_PASSWORD_POSTGRES}@db:5432/${POSTGRES_DB:-index01}
       - AUTH_SECRET=${SERVICE_HEX_64_AUTHSECRET}
+      - AUTH_SECRET_PREVIOUS=${AUTH_SECRET_PREVIOUS:-}
       - OIDC_ISSUER=${OIDC_ISSUER:?}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:?}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
       - OIDC_SCOPES=${OIDC_SCOPES:-openid profile email}
-      - ALLOWED_EMAILS=${ALLOWED_EMAILS:-}
+      - ALLOWED_EMAILS=${ALLOWED_EMAILS:?Set ALLOWED_EMAILS to your email (or * to allow any account at the issuer)}
+      - ALLOWED_SUBS=${ALLOWED_SUBS:-}
+      - OIDC_REQUIRE_VERIFIED_EMAIL=${OIDC_REQUIRE_VERIFIED_EMAIL:-}
       - INDEX01_WEBHOOK_SECRET=${INDEX01_WEBHOOK_SECRET:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - TZ=${TZ:-UTC}
-      - BODY_SIZE_LIMIT=${BODY_SIZE_LIMIT:-50M}
+      - BODY_SIZE_LIMIT=${BODY_SIZE_LIMIT:-51M}
     volumes:
       - app-data:/data
     depends_on:
@@ -72,7 +77,12 @@ services:
       - >-
         set -e;
         m=/models/ggml-$${WHISPER_MODEL}.bin;
-        [ -s "$$m" ] || /app/models/download-ggml-model.sh "$${WHISPER_MODEL}" /models;
+        if [ ! -s "$$m" ]; then
+          rm -rf /models/.tmp; mkdir -p /models/.tmp;
+          /app/models/download-ggml-model.sh "$${WHISPER_MODEL}" /models/.tmp;
+          mv "/models/.tmp/ggml-$${WHISPER_MODEL}.bin" "$$m";
+          rm -rf /models/.tmp;
+        fi;
         exec whisper-server --host 0.0.0.0 --port 8080 -t "$${WHISPER_THREADS}" -m "$$m"
     environment:
       - WHISPER_MODEL=${WHISPER_MODEL:-base}

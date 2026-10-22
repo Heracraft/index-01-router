@@ -2,7 +2,7 @@
 // more than 30 s of audio it is cut at pauses into chunks of at most 30 s, each encoded in the
 // provider's format and sent with at most 3 requests in flight. Provider modules take settings
 // as arguments and import nothing from $app, so plain node scripts and vitest can load them.
-import { decodePcm, encodePcm } from './audio.ts';
+import { decodePcm, encodePcm, type DecodeOptions } from './audio.ts';
 import {
 	findPauses,
 	joinTexts,
@@ -14,6 +14,7 @@ import {
 	type Chunk,
 	type Span
 } from './chunk.ts';
+import { isHallucination } from './clean.ts';
 import { gemini } from './gemini.ts';
 import { openai } from './openai.ts';
 import { openaiAudio } from './openai-audio.ts';
@@ -46,11 +47,15 @@ export const PROVIDERS: { id: TranscribeProvider; label: string; defaultModel: s
 /** Chunking applies above this length */
 export const CHUNK_SECONDS = 30;
 export const CONCURRENCY = 3;
+/** Longest recording transcribed. Decoded PCM takes 32 KB per second: 230 MB at this cap */
+export const MAX_AUDIO_SECONDS = 2 * 60 * 60;
+/** Shorter clips count as no speech */
+const MIN_SECONDS = 0.1;
 
 export interface TranscribeDeps {
 	fetch?: typeof fetch;
 	sleep?: (ms: number) => Promise<void>;
-	decode?: (path: string) => Promise<Int16Array>;
+	decode?: (path: string, opts?: DecodeOptions) => Promise<Int16Array>;
 	encode?: typeof encodePcm;
 }
 
@@ -69,6 +74,16 @@ export function byLabel(p: Provider, settings: TranscriptionSettings) {
 function wholeFile(pauses: Span[], duration: number): Chunk[] {
 	const voiced = voicedIn(pauses, 0, duration);
 	return voiced.length ? [{ start: 0, end: duration, overlap: false, voiced }] : [];
+}
+
+/**
+ * The caller's deadline (an AbortSignal.timeout) surfaces as a DOMException. Turned into a
+ * TranscribeError that is not retried: starting over would hit the same deadline.
+ */
+function timedOut(e: unknown): unknown {
+	if (e instanceof Error && e.name === 'TimeoutError' && !(e instanceof TranscribeError))
+		return new TranscribeError('Transcription ran past its time limit', false);
+	return e;
 }
 
 /** Run `fn` over items with at most `n` in flight. Stops taking new items after a failure */
@@ -106,9 +121,19 @@ export async function transcribe(
 	const encode = deps.encode ?? encodePcm;
 	input.signal?.throwIfAborted();
 
-	const pcm = await decode(input.path);
+	const tooLong = () =>
+		new TranscribeError(`Recording longer than ${MAX_AUDIO_SECONDS / 3600} h`, false);
+	if (input.durationMs != null && input.durationMs > MAX_AUDIO_SECONDS * 1000) throw tooLong();
+	const pcm = await decode(input.path, {
+		expectedSeconds: input.durationMs ? input.durationMs / 1000 : undefined,
+		// One second past the cap tells an over-length file from one exactly at it
+		maxSeconds: MAX_AUDIO_SECONDS + 1
+	});
 	const duration = pcm.length / SAMPLE_RATE;
-	if (duration < 0.1) throw new TranscribeError('The file holds no audio', false);
+	// Nothing decoded points to a broken file; a clip too short for a word is just no speech
+	if (pcm.length === 0) throw new TranscribeError('The file holds no audio', false);
+	if (duration > MAX_AUDIO_SECONDS) throw tooLong();
+	if (duration < MIN_SECONDS) return { text: '', languages: [], by };
 	const { pauses } = findPauses(pcm);
 
 	// Sibling requests stop once one fails for good
@@ -142,10 +167,12 @@ export async function transcribe(
 				const upload = wholeUpload ?? (await encode(pcm, provider.format, c.start, c.end));
 				try {
 					const r = await provider.transcribe(upload, settings, ctx);
+					// A noise chunk must not leak an invented phrase or the language guessed for it
+					if (!r.text.trim() || isHallucination(r)) return { text: '', languages: [] };
 					return { text: r.text, languages: normalizeLanguages(r.languages) };
 				} catch (e) {
 					if (!controller.signal.aborted) controller.abort(e);
-					throw e;
+					throw timedOut(e);
 				}
 			}
 		);
@@ -157,6 +184,8 @@ export async function transcribe(
 			),
 			by
 		};
+	} catch (e) {
+		throw timedOut(e);
 	} finally {
 		input.signal?.removeEventListener('abort', onAbort);
 	}

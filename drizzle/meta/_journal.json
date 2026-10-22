@@ -8,6 +8,20 @@
       "when": 1792646282211,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792654854179,
+      "tag": "0001_delivery_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792655399095,
+      "tag": "0002_recordings_keyset",
+      "breakpoints": true
     }
   ]
 }

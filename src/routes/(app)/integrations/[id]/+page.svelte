@@ -13,6 +13,8 @@
 
 	const it = $derived(data.integration);
 	const isNew = $derived(!it.id);
+	// Action URLs keep ?kind= for a new integration; SvelteKit reads the action from the /param
+	const q = $derived(isNew ? `?kind=${encodeURIComponent(data.kind.kind)}&` : '?');
 	const allTriggers = $derived(it.triggers.length === 0);
 
 	// Labels named in a save error ("API key required") mark their field
@@ -24,7 +26,8 @@
 	const submit: SubmitFunction = ({ submitter }) => {
 		busy = submitter?.getAttribute('formaction')?.includes('test') ? 'test' : 'save';
 		return async ({ update, result }) => {
-			await update({ reset: false });
+			// A test changes nothing stored; reloading would put the stored values back over your edits
+			await update({ reset: false, refreshAll: busy !== 'test' });
 			if (busy === 'save' && result.type === 'success') savedAt = Date.now();
 			busy = null;
 		};
@@ -48,14 +51,14 @@
 	{/snippet}
 </PageHead>
 
-<form method="POST" action="?/save" use:enhance={submit} class="hk-fields">
+<form method="POST" action="{q}/save" use:enhance={submit} class="hk-fields">
 	<div>
 		<label class="hk-field-label" for="name">Name</label>
 		<input
 			id="name"
 			name="name"
 			class="hk-input"
-			value={it.name}
+			defaultValue={it.name}
 			required
 			aria-invalid={invalid('Name') || undefined}
 		/>
@@ -143,7 +146,7 @@
 		</button>
 		<button
 			class="hk-btn-secondary"
-			formaction="?/test"
+			formaction="{q}/test"
 			disabled={!!busy}
 			aria-busy={busy === 'test'}
 		>

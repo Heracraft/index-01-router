@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { gemini, geminiBody, parseGeminiReply } from './gemini.ts';
+import { isHallucination } from './clean.ts';
+import { gemini, GEMINI_DEFAULT_MODEL, geminiBody, parseGeminiReply } from './gemini.ts';
 import {
 	errorDetail,
+	httpError,
 	modelKind,
 	openai,
 	parseTranscription,
@@ -18,7 +20,7 @@ function settings(over: Partial<TranscriptionSettings> = {}): TranscriptionSetti
 		provider: 'openai',
 		openai: { baseUrl: 'https://api.openai.com/v1/', apiKey: 'sk-test', model: 'gpt-transcribe' },
 		openaiAudio: { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-audio' },
-		gemini: { apiKey: 'g-test', model: 'gemini-2.5-flash' },
+		gemini: { apiKey: 'g-test', model: 'gemini-3.8-flash' },
 		whisperCpp: { url: 'http://whisper:8080' },
 		languages: [],
 		prompt: '',
@@ -220,6 +222,64 @@ describe('openai', () => {
 		expect(parseTranscription('plain words\n')).toEqual({ text: 'plain words', languages: [] });
 	});
 
+	it('drops segments Whisper marks as silence or loops', () => {
+		const reply = (segments: object[]) =>
+			JSON.stringify({
+				text: segments.map((s) => (s as { text: string }).text).join(''),
+				segments
+			});
+		expect(
+			parseTranscription(reply([{ text: ' Hmm.', no_speech_prob: 0.9, avg_logprob: -1.2 }])).text
+		).toBe('');
+		expect(
+			parseTranscription(
+				reply([
+					{ text: ' Hello.', no_speech_prob: 0.1, avg_logprob: -0.3, compression_ratio: 1.2 },
+					{
+						text: ' la la la la la la',
+						no_speech_prob: 0.1,
+						avg_logprob: -0.3,
+						compression_ratio: 3.1
+					}
+				])
+			)
+		).toEqual({ text: 'Hello.', languages: [], noSpeech: 0.1 });
+		expect(parseTranscription(JSON.stringify({ text: ' [Motor]' })).text).toBe('');
+	});
+
+	it('flags stock hallucinations only on doubt', () => {
+		const ja = parseTranscription(
+			JSON.stringify({
+				text: 'ご視聴ありがとうございました',
+				segments: [
+					{ text: 'ご視聴ありがとうございました', no_speech_prob: 0.48, avg_logprob: -0.72 }
+				]
+			})
+		);
+		expect(ja.text).toBe('ご視聴ありがとうございました');
+		expect(isHallucination(ja)).toBe(true);
+		expect(isHallucination({ text: 'Thank you.', noSpeech: 0.01 })).toBe(false);
+		expect(isHallucination({ text: 'Thank you.', noSpeech: 0.5 })).toBe(true);
+		expect(isHallucination({ text: 'Thank you.' })).toBe(false);
+		expect(isHallucination({ text: 'Sous-titrage Société Radio-Canada' })).toBe(true);
+		expect(isHallucination({ text: 'Legendas do filme precisam de revisão' })).toBe(false);
+		expect(isHallucination({ text: 'Thanks for watching, see you tomorrow' })).toBe(false);
+		// A run of outro sentences, as whisper-1 wrote for 20 s of pink noise
+		expect(
+			isHallucination({
+				text: 'Thanks for watching... Please subscribe and Thumbs Up.... More Videos to come....'
+			})
+		).toBe(true);
+		expect(isHallucination({ text: 'Thank you for watching! See you in the next video.' })).toBe(
+			true
+		);
+		expect(isHallucination({ text: 'Please subscribe to the newsletter. Then call Juma.' })).toBe(
+			false
+		);
+		expect(isHallucination({ text: 'Remind me to subscribe to the gym' })).toBe(false);
+		expect(isHallucination({ text: 'Subscribe to the newsletter.' })).toBe(false);
+	});
+
 	it('needs a key for api.openai.com only', async () => {
 		const { f } = fakeFetch([json({ text: '' })]);
 		const s = settings({
@@ -320,11 +380,11 @@ describe('gemini', () => {
 		expect(r).toEqual({ text: 'Sawa sawa', languages: ['sw'] });
 		const c = calls[0]!;
 		expect(c.url).toBe(
-			'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
+			'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent'
 		);
 		expect((c.init.headers as Record<string, string>)['x-goog-api-key']).toBe('g-test');
 		const body = JSON.parse(c.init.body as string);
-		expect(body).toEqual(geminiBody(ogg, settings({ prompt: 'Juma' })));
+		expect(body).toEqual(geminiBody(ogg, settings({ prompt: 'Juma' }), 'gemini-3.8-flash'));
 		expect(body.contents[0].parts[1]).toEqual({
 			inline_data: { mime_type: 'audio/ogg', data: 'AQID' }
 		});
@@ -352,16 +412,110 @@ describe('gemini', () => {
 		);
 		const missing = fakeFetch([json({ error: { code: 404, message: 'not found' } }, 404)]);
 		await expect(gemini.test(settings(), ctx(missing.f))).rejects.toThrow(
-			'gemini-2.5-flash not offered by generativelanguage.googleapis.com'
-		);
-		const ok = fakeFetch([json({ name: 'models/gemini-2.5-flash' })]);
-		expect(await gemini.test(settings(), ctx(ok.f))).toBe('gemini-2.5-flash available');
-		expect(ok.calls[0]!.url).toBe(
-			'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash'
+			'gemini-3.8-flash not offered by generativelanguage.googleapis.com'
 		);
 		expect(() => parseGeminiReply('{"promptFeedback":{"blockReason":"SAFETY"}}')).toThrow(
 			'Gemini blocked the request (SAFETY)'
 		);
+	});
+
+	it('defaults to gemini-3.8-flash', () => {
+		expect(GEMINI_DEFAULT_MODEL).toBe('gemini-3.8-flash');
+		expect(gemini.model(settings({ gemini: { apiKey: 'k', model: ' ' } }))).toBe(
+			'gemini-3.8-flash'
+		);
+		expect(
+			gemini.model(settings({ gemini: { apiKey: 'k', model: 'models/gemini-3.5-flash-lite' } }))
+		).toBe('gemini-3.5-flash-lite');
+	});
+
+	it('tests with a model GET, then a generateContent of silence', async () => {
+		const { f, calls } = fakeFetch([
+			json({ name: 'models/gemini-3.8-flash' }),
+			json({
+				candidates: [{ content: { parts: [{ text: '{"text":"' }] }, finishReason: 'MAX_TOKENS' }]
+			})
+		]);
+		expect(await gemini.test(settings(), ctx(f))).toBe('gemini-3.8-flash transcribes');
+		expect(calls.map((c) => c.url)).toEqual([
+			'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash',
+			'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent'
+		]);
+		const body = JSON.parse(calls[1]!.init.body as string);
+		expect(body.generationConfig.maxOutputTokens).toBe(64);
+		const audioPart = body.contents[0].parts[1].inline_data;
+		expect(audioPart.mime_type).toBe('audio/ogg');
+		expect(Buffer.from(audioPart.data, 'base64').subarray(0, 4).toString()).toBe('OggS');
+	});
+
+	it('names the model when generateContent refuses it', async () => {
+		const { f } = fakeFetch([
+			json({ name: 'models/gemini-2.5-flash' }),
+			json(
+				{
+					error: {
+						code: 403,
+						message: 'Your project does not have access to model gemini-2.5-flash.',
+						status: 'PERMISSION_DENIED'
+					}
+				},
+				403
+			)
+		]);
+		const s = settings({ gemini: { apiKey: 'k', model: 'gemini-2.5-flash' } });
+		const err = await gemini.test(s, ctx(f)).catch((e) => e);
+		expect(err.message).toBe(
+			'gemini-2.5-flash not available to this key (403): Your project does not have access to model gemini-2.5-flash.'
+		);
+		expect(err.retryable).toBe(false);
+	});
+
+	it('tells a model refusal from a key refusal', () => {
+		const host = 'generativelanguage.googleapis.com';
+		const zero = JSON.stringify({
+			error: {
+				code: 429,
+				status: 'RESOURCE_EXHAUSTED',
+				message:
+					'Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: gemini-2.5-pro'
+			}
+		});
+		expect(httpError(429, zero, host, 'gemini-2.5-pro').message).toMatch(
+			/^gemini-2\.5-pro not available to this key \(429\)/
+		);
+		const busy = JSON.stringify({
+			error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Resource has been exhausted' }
+		});
+		expect(httpError(429, busy, host, 'gemini-3.8-flash').retryable).toBe(true);
+		const blocked = JSON.stringify({
+			error: {
+				code: 403,
+				status: 'PERMISSION_DENIED',
+				message: 'API key expired.',
+				details: [{ reason: 'API_KEY_INVALID' }]
+			}
+		});
+		expect(httpError(403, blocked, host, 'gemini-3.8-flash').message).toBe(
+			`Key rejected by ${host} (403)`
+		);
+		// Without a model the old wording stays
+		expect(httpError(403, '{"error":{"status":"PERMISSION_DENIED"}}', host).message).toBe(
+			`Key rejected by ${host} (403)`
+		);
+	});
+
+	it('picks temperature and thinking by model generation', () => {
+		const ogg = { bytes: new Uint8Array([1]), mime: 'audio/ogg', name: 'audio.ogg' };
+		const g3 = geminiBody(ogg, settings(), 'gemini-3-flash').generationConfig;
+		expect(g3).not.toHaveProperty('temperature');
+		expect(g3).toMatchObject({ thinkingConfig: { thinkingLevel: 'low' } });
+		const g25 = geminiBody(ogg, settings(), 'gemini-2.5-flash').generationConfig;
+		expect(g25).toMatchObject({ temperature: 0, thinkingConfig: { thinkingBudget: 0 } });
+		const pro = geminiBody(ogg, settings(), 'gemini-2.5-pro').generationConfig;
+		expect(pro).toMatchObject({ thinkingConfig: { thinkingBudget: 128 } });
+		const other = geminiBody(ogg, settings(), 'gemini-2.0-flash').generationConfig;
+		expect(other).not.toHaveProperty('thinkingConfig');
+		expect(other).toMatchObject({ temperature: 0 });
 	});
 });
 
@@ -386,6 +540,25 @@ describe('whisper-cpp', () => {
 	it('strips non-speech tags and reports server errors', () => {
 		expect(cleanWhisperText('[BLANK_AUDIO]')).toBe('');
 		expect(cleanWhisperText('Hello (music playing) there [ Silence ]')).toBe('Hello there');
+		expect(cleanWhisperText(' [Motor]')).toBe('');
+		expect(cleanWhisperText('hello [Motor] there')).toBe('hello there');
+		expect(cleanWhisperText('(laughs) ok *music* ♪ la la ♪ ♫')).toBe('ok');
+		expect(cleanWhisperText('I said *really* (twice, to be sure today)')).toBe(
+			'I said *really* (twice, to be sure today)'
+		);
+		expect(cleanWhisperText('...')).toBe('');
+		expect(
+			parseWhisperReply(
+				JSON.stringify({
+					text: ' Noise here. Real words.',
+					language: 'nynorsk',
+					segments: [
+						{ text: ' Noise here.', no_speech_prob: 0.9, avg_logprob: -1.2 },
+						{ text: ' Real words.', no_speech_prob: 0.05, avg_logprob: -0.2 }
+					]
+				})
+			)
+		).toEqual({ text: 'Real words.', languages: ['nn'], noSpeech: 0.05 });
 		expect(() => parseWhisperReply('{"error":"failed to read audio"}')).toThrow(
 			'whisper.cpp: failed to read audio'
 		);

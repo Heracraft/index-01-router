@@ -51,14 +51,18 @@
 		<span class="hk-mono">{rec.deliveryId}</span>
 	{/snippet}
 	{#snippet actions()}
-		{#if failedDeliveries > 0 && rec.transcript}
+		{#if rec.transcript}
 			<form method="POST" action="?/route" use:enhance={submit('route')}>
 				<button
 					class="hk-btn-secondary"
 					disabled={busy || !!pending}
 					aria-busy={pending === 'route'}
 				>
-					{pending === 'route' ? 'Delivering…' : 'Deliver again'}
+					{pending === 'route'
+						? 'Delivering…'
+						: failedDeliveries > 0 || rec.status === 'failed'
+							? 'Deliver again'
+							: 'Deliver'}
 				</button>
 			</form>
 		{/if}
@@ -133,6 +137,12 @@
 				>{/if}
 		</dd>
 	</div>
+	{#if data.userAgent}
+		<div>
+			<dt>Client</dt>
+			<dd class="muted ua" title={data.userAgent}>{data.userAgent}</dd>
+		</div>
+	{/if}
 	{#if rec.hasAudio}
 		<div>
 			<dt>Audio</dt>
@@ -181,7 +191,7 @@
 	</div>
 	{#if data.deliveries.length === 0}
 		<div class="hk-empty-row">
-			<span>{busy ? 'No deliveries yet.' : 'No integration matched this recording.'}</span>
+			<span>{busy ? 'No deliveries yet.' : 'No deliveries on record.'}</span>
 			<a class="hk-link" href={resolve('/(app)/integrations')}>Integrations</a>
 		</div>
 	{:else}
@@ -210,6 +220,13 @@
 									<span class="hk-badge hk-badge--err">Failed</span>
 								{:else if d.status === 'pending'}
 									<span class="pending"><span class="hk-dot hk-dot--busy"></span>Pending</span>
+								{:else if d.stale}
+									<span class="sent-stale"
+										>Sent <span
+											class="hk-badge hk-badge--warn"
+											title="Sent before the transcript changed">Stale</span
+										></span
+									>
 								{:else}
 									{DELIVERY[d.status] ?? d.status}
 								{/if}
@@ -220,7 +237,7 @@
 								>{d.error ?? ''}</td
 							>
 							<td class="act">
-								{#if d.status === 'failed'}
+								{#if d.status === 'failed' || d.status === 'skipped'}
 									<form method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
 										<input type="hidden" name="delivery" value={d.id} />
 										<button
@@ -228,9 +245,37 @@
 											disabled={busy || !!pending}
 											aria-busy={pending === d.id}
 										>
-											{pending === d.id ? 'Retrying…' : 'Retry'}
+											{pending === d.id
+												? d.status === 'skipped'
+													? 'Delivering…'
+													: 'Retrying…'
+												: d.status === 'skipped'
+													? 'Deliver'
+													: 'Retry'}
 										</button>
 									</form>
+								{:else if d.status === 'sent'}
+									<ConfirmAction
+										action="?/redeliver"
+										fields={{ delivery: d.id }}
+										label={d.stale ? 'Send corrected transcript' : 'Send again'}
+										title={d.stale ? 'Send corrected transcript' : 'Send again'}
+										confirmLabel="Send"
+										triggerClass="hk-btn-secondary hk-btn-sm"
+										confirmClass="hk-btn"
+										disabled={busy || !!pending}
+									>
+										{#if d.stale}
+											<p class="confirm">
+												Adds the new transcript to {d.target ?? d.name} as a new entry. The old entry
+												stays.
+											</p>
+										{:else}
+											<p class="confirm">
+												Adds the entry to {d.target ?? d.name} again, unless it is still there.
+											</p>
+										{/if}
+									</ConfirmAction>
 								{/if}
 							</td>
 						</tr>
@@ -282,6 +327,11 @@
 	}
 	dt {
 		color: var(--hk-text-3);
+	}
+	.ua {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	dd {
 		margin: 0;
@@ -380,6 +430,16 @@
 	.act {
 		text-align: right;
 		white-space: nowrap;
+	}
+	/* The modal renders inside the nowrap action cell */
+	.confirm {
+		white-space: normal;
+		text-align: left;
+	}
+	.sent-stale {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 	}
 	.pending {
 		display: inline-flex;

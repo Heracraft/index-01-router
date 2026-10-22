@@ -8,6 +8,7 @@
 	import {
 		dayKey,
 		dayLabel,
+		formatDateTime,
 		formatDuration,
 		formatNumber,
 		formatTime,
@@ -25,11 +26,13 @@
 		{ value: 'done', label: 'Done' }
 	] as const;
 	const filterQuery = (value: string) => (value === 'all' ? '' : `?status=${value}`);
-	const moreQuery = $derived(
-		`?${new URLSearchParams({
-			...(data.filter === 'all' ? {} : { status: data.filter }),
-			limit: String(data.limit + 50)
-		})}`
+	const olderQuery = $derived(
+		data.nextCursor
+			? `?${new URLSearchParams({
+					...(data.filter === 'all' ? {} : { status: data.filter }),
+					before: data.nextCursor
+				})}`
+			: ''
 	);
 
 	// Group consecutive rows by day in the general timezone
@@ -156,7 +159,10 @@
 
 	{#if data.recordings.length === 0}
 		<div class="hk-empty-row">
-			{#if data.filter === 'all'}
+			{#if data.before}
+				<span>No older recordings.</span>
+				<a class="hk-link" href="{resolve('/(app)')}{filterQuery(data.filter)}">Newest</a>
+			{:else if data.filter === 'all'}
 				<span>No recordings yet.</span>
 				<a class="hk-link" href={resolve('/(app)/webhook')}>Webhook URL</a>
 			{:else}
@@ -204,18 +210,21 @@
 				{/each}
 			</ul>
 		{/each}
-		{#if data.recordings.length < data.matching}
-			<div class="more">
-				<a
-					class="hk-btn-secondary"
-					href="{resolve('/(app)')}{moreQuery}"
-					data-sveltekit-reset="false"
-					data-sveltekit-replacestate>Load 50 more</a
-				>
-				<span class="caption hk-num">
-					{formatNumber(data.recordings.length)} of {formatNumber(data.matching)}
-				</span>
-			</div>
+		{#if data.nextCursor || data.before}
+			<nav class="more" aria-label="Pages">
+				{#if data.before}
+					<a class="hk-btn-secondary" href="{resolve('/(app)')}{filterQuery(data.filter)}">Newest</a
+					>
+				{/if}
+				{#if data.nextCursor}
+					<a class="hk-btn-secondary" href="{resolve('/(app)')}{olderQuery}">Older</a>
+				{/if}
+				{#if data.before}
+					<span class="caption hk-num">
+						Older than {formatDateTime(data.before, tz)}
+					</span>
+				{/if}
+			</nav>
 		{/if}
 	{/if}
 </section>
@@ -408,6 +417,7 @@
 
 	.more {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 1rem;
 		margin-top: 1.25rem;

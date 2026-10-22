@@ -41,34 +41,40 @@ Source of truth: coredevices/mobileapp `INDEX_WEBHOOK_API.md`. Summary:
   unsigned: `text-<recordedAt>-<sha256(transcript) first 12>`.
 - A missing `X-Index-Trigger` means `single-click-hold` (apps before 1.10 had only that gesture).
 - Test events: 200 `ok test`, logged in webhook_events, no recording. Duplicates: 200 `duplicate`.
-- Other answers: 401 (signature), 400 (malformed, wrong version, size mismatch), 413 (over 50 MB),
-  415 (not multipart), 500. Bodies are short plain text.
+- Other answers: 401 (signature), 400 (malformed, wrong version, size mismatch), 413 (audio over
+  50 MB or body over 51 MB), 415 (not multipart), 500. Bodies are short plain text. Header checks
+  (version, signature headers, timestamp, content type, Content-Length) run before the body is
+  read. A 500 logs its cause in webhook_events and answers only `internal error`.
+- A row is inserted only after its audio file is written. A delivery id whose row expected audio
+  and has none (a crash in an older version) is not a duplicate: the resend's audio completes it.
+- webhook_events keeps the last 200 deliveries, signed requests and 500s, and separately the last
+  50 unsigned 4xx rejections.
 
 SvelteKit's form CSRF check runs before hooks and rejects multipart posts without Origin in
 production, so `csrf.trustedOrigins` is `['*']` and `hooks.server.ts` does the Origin check for
-every non-GET request outside the webhook. adapter-node needs `BODY_SIZE_LIMIT=50M`.
+every non-GET request outside the webhook. adapter-node needs `BODY_SIZE_LIMIT=51M`: 50 MB of audio plus 1 MB of multipart overhead.
 
 ## Module contracts
 
 All server code is under `src/lib/server`, imported as `#lib/server/<file>.ts` (no `$lib` in Kit 3).
 Env comes from `$app/env/private` (declared in `src/env.ts`).
 
-| File                          | Exports                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `db/schema.ts`, `db/index.ts` | tables, `db`, `runMigrations()`; casing is snake_case                                                                                                                                                                                                                                                                                |
-| `crypto.ts`                   | `encrypt`, `decrypt`, `isEncrypted` (AES-GCM from AUTH_SECRET)                                                                                                                                                                                                                                                                       |
-| `settings.ts`                 | `getSettings(key)`, `getStored(key)`, `setStored(key, value)`, `envLocks`; keys `transcription`, `general`, `webhook`                                                                                                                                                                                                                |
-| `auth.ts`                     | OIDC `signIn`, `callback`, `signOut`, `handle`; `locals.session`                                                                                                                                                                                                                                                                     |
-| `storage.ts`                  | `saveAudio(id, recordedAt, bytes, mime) -> {path, bytes}`, `absolutePath(rel)`, `deleteAudio(rel)`, `probeDurationMs(abs) -> number \| null`                                                                                                                                                                                         |
-| `webhook-log.ts`              | `logWebhookEvent(event)` (never throws, keeps 200 rows), `listWebhookEvents(limit)`                                                                                                                                                                                                                                                  |
-| `index01/verify.ts`           | `verifyIndexWebhook(headers, raw, secret, {toleranceSec?, nowSec?})`                                                                                                                                                                                                                                                                 |
-| `ingest.ts`                   | `createRecording(input) -> {recording, duplicate}`; inserts row, stores audio, probes duration, calls `enqueue`; `deleteRecording(id) -> boolean`                                                                                                                                                                                    |
-| `transcribe/index.ts`         | `transcribe(input, deps?) -> TranscribeResult`, `testTranscription(settings, deps?) -> string`, `PROVIDERS`                                                                                                                                                                                                                          |
-| `transcribe/*.ts`             | one file per provider, `audio.ts` (ffmpeg decode/encode), `chunk.ts` (pause chunker)                                                                                                                                                                                                                                                 |
-| `integrations/index.ts`       | `kinds`, `listIntegrations()` (secrets decrypted, server only), `listIntegrationsForUI()`/`getIntegrationForUI(id)` (secrets blanked, `secretsSet`), `getIntegration(id)`, `saveIntegration(input)`, `deleteIntegration(id)`, `testIntegration(kind, config, id?)`, `integrationMatches(integration, trigger)`, `TRIGGERS`, `isKind` |
-| `integrations/obsidian.ts`    | the `obsidian` `IntegrationKind`, MCP client                                                                                                                                                                                                                                                                                         |
-| `pipeline.ts`                 | `startWorker()`, `enqueue(id)`, `retryRecording(id, from)`, `redeliver(deliveryId)` (both return once queued, throw while the recording is busy), `onChange(listener)`, `whenIdle()`, `isProcessing(id)`                                                                                                                             |
-| `time.ts`                     | `formatDate(date, format, timeZone)` with tokens YYYY MM DD HH mm ss ddd dddd MMM MMMM                                                                                                                                                                                                                                               |
+| File                          | Exports                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db/schema.ts`, `db/index.ts` | tables, `db`, `runMigrations()`; casing is snake_case                                                                                                                                                                                                                                                                                                           |
+| `crypto.ts`                   | `encrypt`, `decrypt`, `isEncrypted` (AES-GCM from AUTH_SECRET)                                                                                                                                                                                                                                                                                                  |
+| `settings.ts`                 | `getSettings(key)`, `getStored(key)`, `setStored(key, value)`, `envLocks`; keys `transcription`, `general`, `webhook`                                                                                                                                                                                                                                           |
+| `auth.ts`                     | OIDC `signIn`, `callback`, `signOut`, `handle`; `locals.session`                                                                                                                                                                                                                                                                                                |
+| `storage.ts`                  | `saveAudio(id, recordedAt, bytes, mime) -> {path, bytes}`, `absolutePath(rel)`, `deleteAudio(rel)`, `probeDurationMs(abs) -> number \| null`                                                                                                                                                                                                                    |
+| `webhook-log.ts`              | `logWebhookEvent(event)` (never throws, keeps 200 + 50 rejected), `listWebhookEvents(limit)`, `errorSummary(e)`                                                                                                                                                                                                                                                 |
+| `index01/verify.ts`           | `verifyIndexWebhook(headers, raw, secret, {toleranceSec?, nowSec?})`                                                                                                                                                                                                                                                                                            |
+| `ingest.ts`                   | `createRecording(input) -> {recording, duplicate}`; inserts row, stores audio, probes duration, calls `enqueue`; `deleteRecording(id) -> boolean`                                                                                                                                                                                                               |
+| `transcribe/index.ts`         | `transcribe(input, deps?) -> TranscribeResult`, `testTranscription(settings, deps?) -> string`, `PROVIDERS`                                                                                                                                                                                                                                                     |
+| `transcribe/*.ts`             | one file per provider, `audio.ts` (ffmpeg decode/encode), `chunk.ts` (pause chunker)                                                                                                                                                                                                                                                                            |
+| `integrations/index.ts`       | `kinds`, `listIntegrations()` (secrets decrypted, server only), `listIntegrationsForUI()`/`getIntegrationForUI(id)` (secrets blanked, `secretsSet`), `getIntegration(id)`, `saveIntegration(input)`, `deleteIntegration(id) -> {deleted, recordingIds}`, `testIntegration(kind, config, id?)`, `integrationMatches(integration, trigger)`, `TRIGGERS`, `isKind` |
+| `integrations/obsidian.ts`    | the `obsidian` `IntegrationKind`, MCP client                                                                                                                                                                                                                                                                                                                    |
+| `pipeline.ts`                 | `startWorker()`, `enqueue(id)`, `retryRecording(id, from)`, `redeliver(deliveryId)` (both return once queued, throw while the recording is busy), `settleAfterIntegrationDelete(recordingIds)`, `onChange(listener)`, `whenIdle()`, `isProcessing(id)`                                                                                                          |
+| `time.ts`                     | `formatDate(date, format, timeZone)` with tokens YYYY MM DD HH mm ss ddd dddd MMM MMMM                                                                                                                                                                                                                                                                          |
 
 `createRecording` input:
 
@@ -82,7 +88,14 @@ Env comes from `$app/env/private` (declared in `src/env.ts`).
 A recording with no audio but an `appTranscript` skips transcription: the app transcript becomes
 the transcript (`transcribedBy: 'index-app'`). The app transcript is also the fallback when
 transcription fails or hears no speech; the recording's error then starts with "Used the app
-transcript". No speech and no app transcript ends `done` with nothing delivered.
+transcript". No speech and no app transcript ends `done` with nothing delivered. A clip under
+0.1 s counts as no speech; a file that decodes to nothing fails.
+
+One transcription attempt gets as long as the recording (three times that for `whisper-cpp`), at
+least 15 minutes and at most 6 hours. Running past it fails at once, with no retry. Recordings
+over 2 hours fail without being decoded. Sound-event tags (`[Music]`, `(laughs)`), Whisper
+segments marked as silence, and stock phrases Whisper writes for noise ("Thanks for watching",
+or a run of outro lines like "Please subscribe and thumbs up. More videos to come") are dropped before the text counts as speech.
 
 ## Transcription
 
@@ -92,7 +105,7 @@ Settings live in the `transcription` settings row (`TranscriptionSettings` in `s
 | -------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `openai`       | `POST {baseUrl}/audio/transcriptions`                                                                                 | OpenAI `gpt-transcribe` (default) takes repeated `languages[]`, `prompt`; whisper-style models take one `language`. Works for Groq and speaches too |
 | `openai-audio` | `POST {baseUrl}/chat/completions` with `input_audio`                                                                  | Audio piped into an LLM (`gpt-audio`). Strict verbatim prompt, JSON out `{text, languages}`                                                         |
-| `gemini`       | `POST generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`                                        | `inline_data` audio, `responseSchema` JSON `{text, languages}`                                                                                      |
+| `gemini`       | `POST generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`                                        | `inline_data` audio, `responseSchema` JSON `{text, languages}`. Default `gemini-3.8-flash`, thinking level low                                      |
 | `whisper-cpp`  | `POST {url}/inference` multipart `file` (16 kHz wav), `language=auto` or the one hint, `response_format=verbose_json` | Local, compose profile `whisper`                                                                                                                    |
 
 Code-switched audio: no single `language` (it forces one), languages passed as hints where the
@@ -114,16 +127,33 @@ Talks MCP (Streamable HTTP, `Authorization: Bearer <key>`) to either the headles
 
 Config: `url` (`http://obsidian-rest:27123/mcp/`), `apiKey`, `insecureTls` (plugin's self-signed
 27124 cert), `notePath` (`{{date:YYYY-MM-DD}}.md`), `heading` (`Notes`), `entryTemplate`
-(`- {{time:HH:mm}} {{transcript}}`), `newNoteTemplate`.
+(`- {{time:HH:mm}} {{transcript}}`), `newNoteTemplate` (`## {{heading}}\n`; a stored `## Notes\n`,
+the old default, reads as the new one).
 
 Deliver: compute path in the general timezone from `recordedAt`, `vault_get_document_map`; if the
 note is missing `vault_write` the new-note template; find the full heading path of `heading`
-(paths are full: `["2026-10-22", "Notes"]`); `vault_patch` append with `createTargetIfMissing` and
-`rejectIfContentPreexists` (a retry that finds its own entry counts as success). The section is read
-first: an entry already there counts as delivered, and a section ending in a list is extended
-in place so entries stay one tight list. Deliveries to one note are serialised in process.
-`insecureTls` uses a `node:https` fetch, since undici is not a dependency. An identical entry
-(same text, same minute) from a second recording is treated as already delivered.
+(paths are full: `["2026-10-22", "Notes"]`); read the section. An entry already there as whole
+lines counts as delivered, so a retry whose entry landed writes nothing; a substring of a longer
+entry does not count. When the entry template starts with a `{{time}}` token (after a literal
+prefix such as `- `) and the note is one per day (or the time format holds the date), the entry
+goes before the first top-level entry with a later time: `vault_patch` replace of the section with
+`ifMatch` set to the map's version, so a hand edit in between fails the attempt and it retries.
+Otherwise `vault_patch` appends with `createTargetIfMissing`, and a section ending in a list is
+extended in place so entries stay one tight list. Deliveries to one note are serialised in process.
+Each delivery and connection test opens one MCP session and ends it with a DELETE
+(`terminateSession`, at most 5 s), since the server keeps sessions until then. `insecureTls` uses a
+`node:https` fetch, since undici is not a dependency. A delivery's first attempt always writes
+its entry, so two recordings with the same text in the same minute both land. A retry, a resumed
+job or "Send again" skips an entry whose exact lines are already in the section.
+
+Re-transcription: `recordings.transcript_version` goes up when the transcript text changes, and a
+delivery stores the version it sent (`sent_version`). A new transcript leaves sent deliveries
+alone; the recording page marks them Stale and offers "Send corrected transcript", which adds a
+new entry and leaves the old one in the note. "Send again" on a sent delivery adds the entry only
+if it is no longer in the note.
+
+Deleting an integration cascades its deliveries; `settleAfterIntegrationDelete` then recomputes
+the status and error of each failed recording that had one.
 
 ## UI
 

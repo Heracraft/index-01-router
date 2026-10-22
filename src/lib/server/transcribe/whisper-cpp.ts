@@ -2,7 +2,13 @@
 // input, so this works whether or not the server runs with --convert.
 import { hostOf, send, trimUrl } from './openai.ts';
 import { normalizeLanguages } from './prompt.ts';
-import { TranscribeError, type Provider, type TranscriptionSettings } from './types.ts';
+import { cleanTranscriptText, textFromSegments } from './clean.ts';
+import {
+	TranscribeError,
+	type ChunkReply,
+	type Provider,
+	type TranscriptionSettings
+} from './types.ts';
 
 export function whisperFields(
 	settings: Pick<TranscriptionSettings, 'languages' | 'prompt'>
@@ -19,28 +25,36 @@ export function whisperFields(
 	return fields;
 }
 
-/** whisper.cpp marks non-speech with tags such as [BLANK_AUDIO] or (music) */
-export function cleanWhisperText(text: string) {
-	return text
-		.replace(/\[(?:BLANK_AUDIO|[^\]]*(?:silence|music|noise|inaudible)[^\]]*)\]/gi, ' ')
-		.replace(/\((?:[^)]*(?:silence|music|noise|inaudible)[^)]*)\)/gi, ' ')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
+/**
+ * whisper.cpp marks non-speech with tags such as [BLANK_AUDIO], [Motor] or (music). Kept as an
+ * alias of the shared filter
+ */
+export const cleanWhisperText = cleanTranscriptText;
 
-export function parseWhisperReply(body: string) {
-	let j: { text?: unknown; language?: unknown; error?: unknown };
+/** verbose_json from whisper.cpp: same segment filter as OpenAI's, then tags stripped */
+export function parseWhisperReply(body: string): ChunkReply {
+	let j: { text?: unknown; language?: unknown; error?: unknown; segments?: unknown };
 	try {
 		j = JSON.parse(body);
 	} catch {
-		return { text: cleanWhisperText(body), languages: [] };
+		return { text: cleanTranscriptText(body), languages: [] };
 	}
 	if (typeof j.error === 'string') throw new TranscribeError(`whisper.cpp: ${j.error}`, false);
-	return {
-		text: typeof j.text === 'string' ? cleanWhisperText(j.text) : '',
-		languages: normalizeLanguages(j.language)
-	};
+	const full = typeof j.text === 'string' ? j.text : '';
+	const seg = textFromSegments(j.segments, full);
+	const text = cleanTranscriptText(seg ? seg.text : full);
+	const languages = normalizeLanguages(j.language);
+	return seg?.noSpeech === undefined
+		? { text, languages }
+		: { text, languages, noSpeech: seg.noSpeech };
 }
+
+/**
+ * Per request timeout: 10 minutes, or three times the audio's length for a long unchunked
+ * upload, since a CPU build can run slower than real time. 16 kHz mono wav is 32 KB per second.
+ */
+export const requestTimeoutMs = (wavBytes: number) =>
+	Math.max(10 * 60_000, Math.ceil(wavBytes / 32_000) * 3_000);
 
 export const whisperCpp: Provider = {
 	id: 'whisper-cpp',
@@ -57,7 +71,7 @@ export const whisperCpp: Provider = {
 		const url = trimUrl(settings.whisperCpp.url);
 		const body = await send(
 			`${url}/inference`,
-			{ ...ctx, timeoutMs: ctx.timeoutMs ?? 10 * 60_000 },
+			{ ...ctx, timeoutMs: ctx.timeoutMs ?? requestTimeoutMs(audio.bytes.byteLength) },
 			{
 				body: () => {
 					const form = new FormData();

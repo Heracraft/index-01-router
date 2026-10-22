@@ -10,6 +10,7 @@ import {
 	TRIGGERS,
 	type Kind
 } from '#lib/server/integrations/index.ts';
+import { settleAfterIntegrationDelete } from '#lib/server/pipeline.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -80,7 +81,12 @@ async function readForm(request: Request, kindName: string) {
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 async function kindFor(id: string, url: URL) {
-	if (id === 'new') return url.searchParams.get('kind') ?? 'obsidian';
+	if (id === 'new') {
+		// The form keeps ?kind= in its action URLs; without it the kind is unknown
+		const kind = url.searchParams.get('kind');
+		if (!kind) error(400, 'Missing integration kind');
+		return kind;
+	}
 	const row = UUID.test(id) ? await getIntegrationForUI(id) : null;
 	if (!row) error(404, 'Integration not found');
 	return row.kind;
@@ -132,7 +138,10 @@ export const actions: Actions = {
 		}
 	},
 	delete: async ({ params }) => {
-		if (UUID.test(params.id)) await deleteIntegration(params.id);
+		if (UUID.test(params.id)) {
+			const { recordingIds } = await deleteIntegration(params.id);
+			await settleAfterIntegrationDelete(recordingIds);
+		}
 		redirect(303, '/integrations');
 	}
 };

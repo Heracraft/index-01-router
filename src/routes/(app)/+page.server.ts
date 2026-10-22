@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { fail } from '@sveltejs/kit';
-import { count, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
 import { deliveries, recordings } from '#lib/server/db/schema.ts';
 import { createRecording } from '#lib/server/ingest.ts';
+import { formatCursor, parseCursor } from '#lib/server/cursor.ts';
 import { getSettings } from '#lib/server/settings.ts';
 import {
 	firstLine,
@@ -25,13 +26,12 @@ function filterWhere(filter: Filter): SQL | undefined {
 	return undefined;
 }
 
+/** recordedAt in UTC with microseconds, so a cursor matches the stored value exactly */
+const cursorAt = sql<string>`to_char(${recordings.recordedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 export const load: PageServerLoad = async ({ url }) => {
 	const raw = url.searchParams.get('status') ?? 'all';
 	const filter: Filter = (FILTERS as readonly string[]).includes(raw) ? (raw as Filter) : 'all';
-	const limit = Math.min(
-		Math.max(PAGE, Number.parseInt(url.searchParams.get('limit') ?? '', 10) || PAGE),
-		1000
-	);
+	const before = parseCursor(url.searchParams.get('before'));
 	const { timezone } = await getSettings('general');
 	const now = new Date();
 	const today = startOfDay(now, timezone);
@@ -68,6 +68,7 @@ export const load: PageServerLoad = async ({ url }) => {
 			status: recordings.status,
 			error: recordings.error,
 			languages: recordings.languages,
+			cursorAt,
 			// The list shows one line; the full text stays on the detail page
 			head: sql<string | null>`left(${recordings.transcript}, 400)`,
 			failedDeliveries: sql<number>`(
@@ -76,16 +77,29 @@ export const load: PageServerLoad = async ({ url }) => {
 			)`.mapWith(Number)
 		})
 		.from(recordings)
-		.where(where)
+		.where(
+			and(
+				where,
+				before
+					? sql`(${recordings.recordedAt}, ${recordings.id}) < (${before.at}::timestamptz, ${before.id}::uuid)`
+					: undefined
+			)
+		)
 		.orderBy(desc(recordings.recordedAt), desc(recordings.id))
-		.limit(limit);
+		.limit(PAGE + 1);
+
+	const more = rows.length > PAGE;
+	if (more) rows.length = PAGE;
+	const last = rows.at(-1);
 
 	return {
 		filter,
-		limit,
+		before: before ? new Date(before.at) : null,
+		nextCursor: more && last ? formatCursor(last.cursorAt, last.id) : null,
 		matching,
 		stats,
-		recordings: rows.map(({ head, languages, ...r }) => ({
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars
+		recordings: rows.map(({ head, languages, cursorAt, ...r }) => ({
 			...r,
 			line: firstLine(head, 200),
 			languages: parseLanguages(languages)

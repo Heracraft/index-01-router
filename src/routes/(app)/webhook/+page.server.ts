@@ -1,7 +1,12 @@
-import { randomBytes } from 'node:crypto';
 import { fail } from '@sveltejs/kit';
 import { PUBLIC_URL } from '$app/env/private';
-import { envLocks, getSettings, getStored, setStored } from '#lib/server/settings.ts';
+import {
+	envLocks,
+	getSettings,
+	getStored,
+	newWebhookSecret,
+	setStored
+} from '#lib/server/settings.ts';
 import { listWebhookEvents } from '#lib/server/webhook-log.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -34,6 +39,9 @@ export const load: PageServerLoad = async ({ url }) => {
 export const actions: Actions = {
 	reveal: async () => {
 		const { secret } = await getSettings('webhook');
+		// Seen once is enough to clear the "secret was replaced" banner
+		const stored = await getStored('webhook');
+		if (stored.secretReset) await setStored('webhook', { ...stored, secretReset: false });
 		return { action: 'reveal', secret };
 	},
 	rotate: async () => {
@@ -44,8 +52,8 @@ export const actions: Actions = {
 			});
 		}
 		const stored = await getStored('webhook');
-		const secret = randomBytes(32).toString('base64url');
-		await setStored('webhook', { ...stored, secret });
+		const secret = newWebhookSecret();
+		await setStored('webhook', { ...stored, secret, secretReset: false });
 		return { action: 'rotate', secret };
 	},
 	signature: async ({ request }) => {

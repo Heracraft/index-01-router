@@ -12,12 +12,20 @@ import {
 	readIndexForm,
 	resolveDeliveryId
 } from '#lib/server/index01/parse.ts';
-import { hasSignatureHeaders, verifyIndexWebhook } from '#lib/server/index01/verify.ts';
+import {
+	hasSignatureHeaders,
+	precheckIndexHeaders,
+	verifyIndexSignature,
+	type IndexSignedHeaders
+} from '#lib/server/index01/verify.ts';
 import { getSettings } from '#lib/server/settings.ts';
-import { logWebhookEvent, type WebhookLogEntry } from '#lib/server/webhook-log.ts';
+import { errorSummary, logWebhookEvent, type WebhookLogEntry } from '#lib/server/webhook-log.ts';
 import type { RequestHandler } from './$types';
 
-/** Multipart overhead allowed on top of the audio limit before the body is even read */
+/**
+ * Multipart overhead allowed on top of the audio limit. Matches BODY_SIZE_LIMIT=51M in the
+ * Dockerfile and compose.yaml; a lower adapter limit also ends in 413 through readBody.
+ */
 const MAX_BODY_BYTES = MAX_AUDIO_BYTES + 1024 * 1024;
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -37,37 +45,47 @@ export const POST: RequestHandler = async ({ request }) => {
 	};
 
 	try {
-		if (log.bytes! > MAX_BODY_BYTES) return await reply(413, 'payload too large');
-		const raw = new Uint8Array(await request.arrayBuffer());
-		log.bytes = raw.byteLength;
-		if (raw.byteLength > MAX_BODY_BYTES) return await reply(413, 'payload too large');
-
+		// Everything that needs only the headers runs before the body is read
 		const version = headers.get('x-index-webhook-version');
 		if (version !== null && version !== '1') return await reply(400, 'unsupported webhook version');
 
 		const settings = await getSettings('webhook');
-		let headerId: string | null = null;
+		let signed: IndexSignedHeaders | null = null;
 		if (hasSignatureHeaders(headers)) {
-			const v = verifyIndexWebhook(headers, raw, settings.secret, { toleranceSec: 300 });
-			if (!v.ok) return await reply(v.status, v.reason);
-			log.signed = true;
-			headerId = v.deliveryId;
+			const pre = precheckIndexHeaders(headers, settings.secret, { toleranceSec: 300 });
+			if (!pre.ok) return await reply(pre.status, pre.reason);
+			signed = pre;
 		} else if (settings.requireSignature) {
 			return await reply(401, 'signature required');
-		}
-
-		// Signed resend: answer before parsing
-		if (headerId) {
-			const existing = await findByDelivery(headerId);
-			if (existing) {
-				log.recordingId = existing;
-				return await reply(200, 'duplicate');
-			}
 		}
 
 		const contentType = headers.get('content-type') ?? '';
 		if (!contentType.toLowerCase().startsWith('multipart/form-data'))
 			return await reply(415, 'expected multipart/form-data');
+		if (log.bytes! > MAX_BODY_BYTES) return await reply(413, 'payload too large');
+
+		const raw = await readBody(request, MAX_BODY_BYTES);
+		if (!raw) return await reply(413, 'payload too large');
+		log.bytes = raw.byteLength;
+
+		let headerId: string | null = null;
+		if (signed) {
+			const v = verifyIndexSignature(signed, raw, settings.secret);
+			if (!v.ok) return await reply(v.status, v.reason);
+			log.signed = true;
+			headerId = v.deliveryId;
+		}
+
+		// Signed resend of a stored recording: answer before parsing. An incomplete row (audio
+		// expected, none stored) goes on so this delivery can supply the audio.
+		if (headerId) {
+			const existing = await findByDelivery(headerId);
+			if (existing && !(existing.audioMime && !existing.audioPath)) {
+				log.recordingId = existing.id;
+				return await reply(200, 'duplicate');
+			}
+		}
+
 		let form: FormData;
 		try {
 			form = await new Response(raw, { headers: { 'content-type': contentType } }).formData();
@@ -110,7 +128,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		const trigger = log.trigger || 'single-click-hold';
 		log.trigger = trigger;
 
-		const { recording, duplicate } = await createRecording({
+		const { recording, duplicate, completed } = await createRecording({
 			deliveryId,
 			source: 'ring',
 			trigger,
@@ -123,18 +141,53 @@ export const POST: RequestHandler = async ({ request }) => {
 		});
 		log.recordingId = recording.id;
 		if (duplicate) return await reply(200, 'duplicate');
+		if (completed) return await reply(200, 'stored audio for an earlier delivery', 'ok');
 		return await reply(200, audioBytes ? 'stored' : 'stored transcription', 'ok');
 	} catch (e) {
 		console.error('index01 webhook failed', e);
-		return await reply(500, 'internal error');
+		// The cause goes to the Webhook page; the phone only sees "internal error"
+		return await reply(500, `internal error: ${errorSummary(e)}`, 'internal error');
 	}
 };
 
+/**
+ * Reads the body up to `max` bytes. Null when it is larger, including when adapter-node's
+ * BODY_SIZE_LIMIT stops it first (a SvelteKitError with status 413).
+ */
+async function readBody(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
+	if (!request.body) return new Uint8Array(new ArrayBuffer(0));
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			size += value.byteLength;
+			if (size > max) {
+				await reader.cancel().catch(() => {});
+				return null;
+			}
+			chunks.push(value);
+		}
+	} catch (e) {
+		if ((e as { status?: unknown } | null)?.status === 413) return null;
+		throw e;
+	}
+	const raw = new Uint8Array(size);
+	let offset = 0;
+	for (const c of chunks) {
+		raw.set(c, offset);
+		offset += c.byteLength;
+	}
+	return raw;
+}
+
 async function findByDelivery(deliveryId: string) {
 	const [row] = await db
-		.select({ id: recordings.id })
+		.select({ id: recordings.id, audioMime: recordings.audioMime, audioPath: recordings.audioPath })
 		.from(recordings)
 		.where(eq(recordings.deliveryId, deliveryId))
 		.limit(1);
-	return row?.id ?? null;
+	return row ?? null;
 }

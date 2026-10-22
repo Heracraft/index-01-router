@@ -15,6 +15,8 @@
 		/** Hidden inputs posted with the action */
 		fields?: Record<string, string>;
 		triggerClass?: string;
+		/** Class of the confirm button in the modal */
+		confirmClass?: string;
 		disabled?: boolean;
 		children: Snippet;
 	}
@@ -26,6 +28,7 @@
 		confirmLabel = label,
 		fields = {},
 		triggerClass = 'hk-btn-danger',
+		confirmClass = 'hk-btn-danger',
 		disabled = false,
 		children
 	}: Props = $props();
@@ -55,7 +58,7 @@
 			{#each Object.entries(fields) as [name, value] (name)}
 				<input type="hidden" {name} {value} />
 			{/each}
-			<button class="hk-btn-danger" aria-busy={busy} disabled={busy}>
+			<button class={confirmClass} aria-busy={busy} disabled={busy}>
 				{busy ? `${confirmLabel}…` : confirmLabel}
 			</button>
 		</form>

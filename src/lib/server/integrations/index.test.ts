@@ -39,7 +39,7 @@ describe('normalizeConfig', () => {
 			notePath: '{{date:YYYY-MM-DD}}.md',
 			heading: 'Notes',
 			entryTemplate: '- {{time}}\n{{transcript}}',
-			newNoteTemplate: '## Notes\n'
+			newNoteTemplate: '## {{heading}}\n'
 		});
 	});
 

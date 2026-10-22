@@ -1,9 +1,11 @@
 import { fail } from '@sveltejs/kit';
+import { TZ } from '$app/env/private';
 import {
 	envLocks,
 	getStored,
 	setStored,
 	withEnvKeys,
+	type GeneralSettings,
 	type TranscribeProvider,
 	type TranscriptionSettings
 } from '#lib/server/settings.ts';
@@ -41,6 +43,7 @@ export const load: PageServerLoad = async () => {
 		},
 		envLocks,
 		generalTimezone: general.timezone,
+		envTimezone: TZ,
 		timeZones: zones.includes(general.timezone) ? zones : [general.timezone, ...zones]
 	};
 };
@@ -48,7 +51,10 @@ export const load: PageServerLoad = async () => {
 const PROVIDER_IDS = PROVIDERS.map((p) => p.id) as string[];
 type Errors = Record<string, string>;
 
-/** Form fields over the stored settings. Blank keys keep the stored key; `<key>.clear` drops it */
+/**
+ * Form fields over the stored settings. Blank keys keep the stored key; `<key>.clear` drops it.
+ * A blank model is stored blank, so the provider's default applies
+ */
 async function readForm(request: Request) {
 	const data = await request.formData();
 	const stored = await getStored('transcription');
@@ -89,16 +95,16 @@ async function readForm(request: Request) {
 		provider: (PROVIDER_IDS.includes(provider) ? provider : stored.provider) as TranscribeProvider,
 		openai: {
 			baseUrl: url('openai.baseUrl', stored.openai.baseUrl, 'Base URL'),
-			model: str('openai.model') || stored.openai.model,
+			model: str('openai.model'),
 			apiKey: key('openai.apiKey', stored.openai.apiKey)
 		},
 		openaiAudio: {
 			baseUrl: url('openaiAudio.baseUrl', stored.openaiAudio.baseUrl, 'Base URL'),
-			model: str('openaiAudio.model') || stored.openaiAudio.model,
+			model: str('openaiAudio.model'),
 			apiKey: key('openaiAudio.apiKey', stored.openaiAudio.apiKey)
 		},
 		gemini: {
-			model: str('gemini.model') || stored.gemini.model,
+			model: str('gemini.model'),
 			apiKey: key('gemini.apiKey', stored.gemini.apiKey)
 		},
 		whisperCpp: { url: url('whisperCpp.url', stored.whisperCpp.url, 'Server URL') },
@@ -124,7 +130,13 @@ export const actions: Actions = {
 		const { settings, timezone, errors } = await readForm(request);
 		if (Object.keys(errors).length) return fail(400, { action: 'save', errors });
 		await setStored('transcription', settings);
-		if (timezone) await setStored('general', { ...(await getStored('general')), timezone });
+		if (timezone) {
+			// Store the zone only as an override, so a later change to TZ still applies
+			const general: Partial<GeneralSettings> = await getStored('general');
+			if (timezone === TZ) delete general.timezone;
+			else general.timezone = timezone;
+			await setStored('general', general);
+		}
 		return { action: 'save', saved: true };
 	},
 	test: async ({ request }) => {

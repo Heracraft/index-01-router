@@ -2,6 +2,7 @@
 //   {{date:FMT}} {{time:FMT}}  recordedAt in the general time zone, tokens from time.ts
 //   {{date}} {{time}}          YYYY-MM-DD and HH:mm
 //   {{transcript}} {{languages}} {{trigger}} {{duration}}
+//   {{heading}}                the integration's heading, for new-note templates
 import { formatDate } from '../time.ts';
 
 export interface TemplateVars {
@@ -11,6 +12,7 @@ export interface TemplateVars {
 	languages?: string[];
 	trigger?: string;
 	durationMs?: number | null;
+	heading?: string;
 }
 
 const PLACEHOLDER = /\{\{\s*(\w+)\s*(?::([^}]*))?\}\}/g;
@@ -61,6 +63,8 @@ export function renderTemplate(template: string, vars: TemplateVars, inListItem 
 				return vars.trigger ?? '';
 			case 'duration':
 				return formatDuration(vars.durationMs);
+			case 'heading':
+				return vars.heading ?? '';
 			default:
 				return whole;
 		}

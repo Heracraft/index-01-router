@@ -8,6 +8,9 @@ const client = postgres(DATABASE_URL, { onnotice: () => {} });
 
 export const db = drizzle(client, { schema, casing: 'snake_case' });
 
+/** Ends the pool, letting running queries finish for up to 5 seconds. For shutdown */
+export const closeDb = () => client.end({ timeout: 5 });
+
 /** Applies ./drizzle migrations. Runs from the init hook before the server listens */
 export async function runMigrations(migrationsFolder = 'drizzle') {
 	const migrationClient = postgres(DATABASE_URL, { max: 1, onnotice: () => {} });

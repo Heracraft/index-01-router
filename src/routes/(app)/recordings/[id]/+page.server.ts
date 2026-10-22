@@ -21,6 +21,7 @@ export const load: PageServerLoad = async ({ params }) => {
 				status: deliveries.status,
 				attempts: deliveries.attempts,
 				target: deliveries.target,
+				sentVersion: deliveries.sentVersion,
 				error: deliveries.error,
 				updatedAt: deliveries.updatedAt,
 				integrationId: integrations.id,
@@ -35,6 +36,7 @@ export const load: PageServerLoad = async ({ params }) => {
 			.select({ userAgent: webhookEvents.userAgent })
 			.from(webhookEvents)
 			.where(eq(webhookEvents.recordingId, rec.id))
+			.orderBy(asc(webhookEvents.at))
 			.limit(1)
 	]);
 
@@ -64,7 +66,11 @@ export const load: PageServerLoad = async ({ params }) => {
 				appTranscript && appTranscript !== rec.transcript?.trim() ? appTranscript : null
 		},
 		userAgent: event?.userAgent ?? null,
-		deliveries: rows
+		// Stale: sent before the transcript last changed
+		deliveries: rows.map(({ sentVersion, ...d }) => ({
+			...d,
+			stale: d.status === 'sent' && sentVersion < rec.transcriptVersion
+		}))
 	};
 };
 

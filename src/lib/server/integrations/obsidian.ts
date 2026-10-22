@@ -27,11 +27,16 @@ export const OBSIDIAN_DEFAULTS: ObsidianConfig = {
 	notePath: '{{date:YYYY-MM-DD}}.md',
 	heading: 'Notes',
 	entryTemplate: '- {{time:HH:mm}} {{transcript}}',
-	newNoteTemplate: '## Notes\n'
+	newNoteTemplate: '## {{heading}}\n'
 };
+
+/** The default new-note template before it named {{heading}}; stored configs still carry it */
+const OLD_NEW_NOTE_TEMPLATE = '## Notes\n';
 
 /** Per call timeout for MCP requests */
 const CALL_TIMEOUT_MS = 30_000;
+/** Longest wait for the session DELETE when closing */
+const CLOSE_TIMEOUT_MS = 5_000;
 
 export function obsidianConfig(raw: Record<string, unknown>): ObsidianConfig {
 	const str = (k: keyof ObsidianConfig) =>
@@ -47,9 +52,10 @@ export function obsidianConfig(raw: Record<string, unknown>): ObsidianConfig {
 			.trim()
 			.replace(/^#+\s*/, ''),
 		entryTemplate: str('entryTemplate'),
-		// An empty template is allowed: the heading gets added on first delivery
+		// An empty template is allowed: the heading gets added on first delivery. The old default
+		// is read as the new one, so a changed heading also applies to configs saved with it
 		newNoteTemplate:
-			typeof raw.newNoteTemplate === 'string'
+			typeof raw.newNoteTemplate === 'string' && raw.newNoteTemplate !== OLD_NEW_NOTE_TEMPLATE
 				? raw.newNoteTemplate
 				: OBSIDIAN_DEFAULTS.newNoteTemplate
 	};
@@ -148,11 +154,10 @@ interface ToolResult {
 	content?: { type: string; text?: string }[];
 }
 
-const textOf = (r: ToolResult) =>
-	(r.content ?? [])
-		.map((c) => (c.type === 'text' ? (c.text ?? '') : ''))
-		.join('\n')
-		.trim();
+const rawTextOf = (r: ToolResult) =>
+	(r.content ?? []).map((c) => (c.type === 'text' ? (c.text ?? '') : '')).join('\n');
+
+const textOf = (r: ToolResult) => rawTextOf(r).trim();
 
 type Headings = { [heading: string]: Headings };
 
@@ -194,6 +199,100 @@ export function continuesList(section: string, entry: string) {
 	return last !== '' && LIST_ITEM.test(last);
 }
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * True when `entry` sits in `body` as whole lines: it starts a line, ends one, and the line after
+ * it is not an indented continuation of the same item. "- 10:00 Buy milk" is not in
+ * "- 10:00 Buy milk and eggs".
+ */
+export function containsEntry(body: string, entry: string) {
+	const lf = (t: string) => t.replace(/\r\n?/g, '\n');
+	const want = lf(entry).replace(/\n+$/, '');
+	if (!want) return false;
+	const continuation = LIST_ITEM.test(want) ? '(?![ \\t]+\\S)' : '';
+	return new RegExp(`(^|\\n)${escapeRegExp(want)}(\\n${continuation}|$)`).test(lf(body));
+}
+
+/** Width of each numeric date token, in the order they rank */
+const RANKED = ['YYYY', 'MM', 'DD', 'HH', 'mm', 'ss'] as const;
+const FORMAT_TOKEN = /\[([^\]]*)\]|YYYY|MMMM|MMM|MM|DD|dddd|ddd|HH|mm|ss/g;
+
+/** True when a note path template names one note per day: its {{date}} has year, month and day */
+export function notePerDay(notePath: string) {
+	for (const m of notePath.matchAll(/\{\{\s*date\s*(?::([^}]*))?\}\}/g)) {
+		const fmt = (m[1]?.trim() || 'YYYY-MM-DD').replace(/\[[^\]]*\]/g, '');
+		if (/YYYY/.test(fmt) && /MM/.test(fmt) && /DD/.test(fmt)) return true;
+	}
+	return false;
+}
+
+/**
+ * Reads a sort key off a note line when the entry template starts with a {{time}} token, e.g.
+ * "- {{time:HH:mm}} ..." gives a reader for lines like "- 09:05 ...". Null when the template
+ * starts otherwise, its time format has names (MMM, ddd), which do not sort, or it has no date
+ * while the note is not one per day (a 09:00 from today must not go above yesterday's 10:00).
+ */
+export function entryOrder(
+	template: string,
+	perDay = true
+): ((line: string) => string | null) | null {
+	const m = /^([^{\n]*)\{\{\s*time\s*(?::([^}]*))?\}\}/.exec(template);
+	if (!m) return null;
+	const fmt = m[2]?.trim() || 'HH:mm';
+	const order: (typeof RANKED)[number][] = [];
+	let pattern = '';
+	let last = 0;
+	for (const t of fmt.matchAll(FORMAT_TOKEN)) {
+		pattern += escapeRegExp(fmt.slice(last, t.index));
+		last = t.index + t[0].length;
+		if (t[1] !== undefined) {
+			pattern += escapeRegExp(t[1]);
+			continue;
+		}
+		const rank = RANKED.indexOf(t[0] as (typeof RANKED)[number]);
+		if (rank < 0) return null;
+		order.push(RANKED[rank]!);
+		pattern += `(\\d{${t[0].length}})`;
+	}
+	pattern += escapeRegExp(fmt.slice(last));
+	if (!order.length) return null;
+	if (!perDay && !['YYYY', 'MM', 'DD'].every((t) => order.includes(t as (typeof RANKED)[number])))
+		return null;
+	const re = new RegExp(`^${escapeRegExp(m[1]!)}${pattern}(?!\\d)`);
+	return (line) => {
+		const hit = re.exec(line);
+		if (!hit) return null;
+		const by: Record<string, string> = {};
+		order.forEach((token, i) => (by[token] = hit[i + 1]!));
+		return RANKED.map((t) => by[t] ?? '').join('');
+	};
+}
+
+/**
+ * `body` with `entry` placed before the first top-level entry that sorts after it, or null when
+ * none does (then appending keeps the order). Lines after a sub-heading are left alone.
+ */
+export function insertInOrder(
+	body: string,
+	entry: string,
+	keyOf: (line: string) => string | null
+): string | null {
+	const key = keyOf(entry);
+	if (key === null) return null;
+	const lines = body.split('\n');
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]!;
+		if (/^#{1,6}\s/.test(line)) return null;
+		const k = keyOf(line);
+		if (k === null || k <= key) continue;
+		// A list item joins the list; any other entry is its own paragraph
+		const block = LIST_ITEM.test(entry) ? [entry] : [entry, ''];
+		return [...lines.slice(0, i), ...block, ...lines.slice(i)].join('\n');
+	}
+	return null;
+}
+
 export interface Session {
 	client: Client;
 	call(name: string, args: Record<string, unknown>): Promise<ToolResult>;
@@ -216,10 +315,22 @@ export async function connect(
 		fetch: config.insecureTls ? insecureFetch : undefined
 	});
 	const client = new Client({ name: 'index-01-router', version: '0.1.0' });
+	// client.close() only aborts the stream; the server keeps a session until it gets a DELETE.
+	// terminateSession() runs on the transport's own controller, so it works after `signal` fired
+	const end = async () => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		await Promise.race([
+			transport.terminateSession().catch(() => {}),
+			new Promise<void>((r) => (timer = setTimeout(r, CLOSE_TIMEOUT_MS)))
+		]);
+		clearTimeout(timer);
+		await client.close().catch(() => {});
+	};
 	try {
 		await client.connect(transport, { signal, timeout: CALL_TIMEOUT_MS });
 	} catch (e) {
-		await client.close().catch(() => {});
+		// Initialize can fail after the server assigned a session id
+		await end();
 		throw toDeliverError(e, config.url);
 	}
 	return {
@@ -234,7 +345,7 @@ export async function connect(
 				throw toDeliverError(e, config.url);
 			}
 		},
-		close: () => client.close().catch(() => {})
+		close: end
 	};
 }
 
@@ -268,13 +379,21 @@ async function withNoteLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-/** Appends `entry` under `heading` in `path`, creating the note and the heading when missing */
+type DocumentMap = { headings: Headings; version?: string };
+
+/**
+ * Adds `entry` under `heading` in `path`, creating the note and the heading when missing. With
+ * `keyOf` (see entryOrder) it goes before the first entry that sorts after it, otherwise at the
+ * end of the section.
+ */
 export async function appendToNote(
 	session: Session,
 	path: string,
 	heading: string,
 	entry: string,
-	newNote: string
+	newNote: string,
+	keyOf: ((line: string) => string | null) | null = null,
+	skipIfPresent = true
 ) {
 	let map = await session.call('vault_get_document_map', { path });
 	if (isMissingFile(map)) {
@@ -285,10 +404,8 @@ export async function appendToNote(
 		map = await session.call('vault_get_document_map', { path });
 	}
 	check(map, `Could not read ${path}`);
-	let target = findHeadingPath(
-		parseJson<{ headings: Headings }>(map, 'document map').headings,
-		heading
-	);
+	let doc = parseJson<DocumentMap>(map, 'document map');
+	let target = findHeadingPath(doc.headings, heading);
 
 	if (!target) {
 		const read = check(await session.call('vault_read', { path }), `Could not read ${path}`);
@@ -301,17 +418,36 @@ export async function appendToNote(
 			`Could not add the ${heading} heading`
 		);
 		map = check(await session.call('vault_get_document_map', { path }), `Could not read ${path}`);
-		target = findHeadingPath(
-			parseJson<{ headings: Headings }>(map, 'document map').headings,
-			heading
-		);
+		doc = parseJson<DocumentMap>(map, 'document map');
+		target = findHeadingPath(doc.headings, heading);
 		if (!target) throw new DeliverError(`Added the ${heading} heading but cannot find it`, false);
 	}
 
 	const section = await session.call('vault_read', { path, targetType: 'heading', target });
-	const body = section.isError ? null : textOf(section);
-	// A retry whose entry already landed
-	if (body?.includes(entry)) return;
+	const body = section.isError ? null : rawTextOf(section);
+	// A retry whose entry already landed. A first attempt writes even when the same text from
+	// the same minute is there: that is another recording
+	if (skipIfPresent && body !== null && containsEntry(body, entry)) return;
+
+	const ordered = body !== null && keyOf ? insertInOrder(body, entry, keyOf) : null;
+	if (ordered !== null) {
+		// A replace of the section's content takes what the read returned. ifMatch turns a hand
+		// edit in Obsidian since the map was read into a retry instead of overwriting it
+		const res = await session.call('vault_patch', {
+			path,
+			targetType: 'heading',
+			target,
+			operation: 'replace',
+			content: ordered,
+			...(doc.version ? { ifMatch: doc.version } : {})
+		});
+		if (res.isError && /precondition|ifMatch/i.test(textOf(res))) {
+			throw new DeliverError(`${path} changed while writing`, true);
+		}
+		check(res, `Could not write to ${path}`);
+		return;
+	}
+
 	const tight = body !== null && continuesList(body, entry);
 	const res = await session.call('vault_patch', {
 		path,
@@ -321,11 +457,8 @@ export async function appendToNote(
 		// within -1 continues the section's last list instead of starting a new block
 		...(tight
 			? { within: -1, content: `\n${entry}` }
-			: { content: entry, createTargetIfMissing: true }),
-		rejectIfContentPreexists: true
+			: { content: entry, createTargetIfMissing: true })
 	});
-	// A retry that finds its own entry already there
-	if (res.isError && /already contains/i.test(textOf(res))) return;
 	check(res, `Could not append to ${path}`);
 }
 
@@ -369,7 +502,7 @@ export const obsidian: IntegrationKind = {
 			label: 'New note',
 			type: 'textarea',
 			default: OBSIDIAN_DEFAULTS.newNoteTemplate,
-			hint: 'Used when the note is missing'
+			hint: 'Used when the note is missing. {{heading}} {{date:YYYY-MM-DD}}'
 		}
 	],
 	secrets: ['apiKey'],
@@ -389,14 +522,26 @@ export const obsidian: IntegrationKind = {
 		try {
 			path = renderNotePath(config.notePath, vars);
 			entry = renderEntry(config.entryTemplate, vars);
-			newNote = renderTemplate(config.newNoteTemplate, { ...vars, transcript: '' });
+			newNote = renderTemplate(config.newNoteTemplate, {
+				...vars,
+				transcript: '',
+				heading: config.heading
+			});
 		} catch (e) {
 			throw new DeliverError((e as Error).message, false);
 		}
 		return withNoteLock(`${config.url}\n${path}`, async () => {
 			const session = await connect(config, ctx.signal);
 			try {
-				await appendToNote(session, path, config.heading, entry, newNote);
+				await appendToNote(
+					session,
+					path,
+					config.heading,
+					entry,
+					newNote,
+					entryOrder(config.entryTemplate, notePerDay(config.notePath)),
+					ctx.firstAttempt !== true
+				);
 			} finally {
 				await session.close();
 			}

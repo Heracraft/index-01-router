@@ -1,6 +1,7 @@
 // OpenAI compatible POST /audio/transcriptions (OpenAI, Groq, speaches), and the HTTP helper every
 // provider uses: per request timeout, retries with backoff for 408/409/429/5xx and network errors,
 // specific errors for the rest.
+import { cleanTranscriptText, textFromSegments } from './clean.ts';
 import { normalizeLanguages, sanitizePrompt } from './prompt.ts';
 import {
 	TranscribeError,
@@ -73,10 +74,34 @@ export function errorDetail(body: string): string {
 	return msg.length > 200 ? msg.slice(0, 197) + '...' : msg;
 }
 
-/** Error for a non-2xx answer. Retryable: 408, 409, 429 (except quota), 5xx */
-export function httpError(status: number, body: string, host: string): TranscribeError {
+/**
+ * A 403 or 429 that refuses the model rather than the key: Gemini answers PERMISSION_DENIED for
+ * a model the key may not use (the 2.5 models for new keys), and RESOURCE_EXHAUSTED with a
+ * quota limit of 0 for a model the key's tier does not include
+ */
+function refusesModel(status: number, body: string) {
+	if (status === 403)
+		return (
+			/PERMISSION_DENIED|model|not (?:allowed|available)|does not have access/i.test(body) &&
+			!/API_KEY_|API key|unregistered callers/i.test(body)
+		);
+	return status === 429 && /RESOURCE_EXHAUSTED/.test(body) && /\blimit:\s*0\b/i.test(body);
+}
+
+/**
+ * Error for a non-2xx answer. Retryable: 408, 409, 429 (except quota), 5xx. With `model` given, a
+ * refusal of that model is named as such instead of as a rejected key.
+ */
+export function httpError(
+	status: number,
+	body: string,
+	host: string,
+	model?: string
+): TranscribeError {
 	const detail = errorDetail(body);
 	const tail = detail ? `: ${detail}` : '';
+	if (model && refusesModel(status, body))
+		return new TranscribeError(`${model} not available to this key (${status})${tail}`, false);
 	if (status === 401 || status === 403)
 		return new TranscribeError(`Key rejected by ${host} (${status})`, false);
 	if (
@@ -97,6 +122,8 @@ export interface SendOptions {
 	/** Built per attempt */
 	body?: () => BodyInit;
 	attempts?: number;
+	/** Model the request asks for, named in errors that refuse it */
+	model?: string;
 }
 
 /** One request with retries. Resolves to the response body of a 2xx answer */
@@ -138,7 +165,7 @@ export async function send(
 		}
 		if (r) {
 			if (r.ok) return body;
-			last = httpError(r.status, body, host);
+			last = httpError(r.status, body, host, opts.model);
 			if (!last.retryable) throw last;
 			after = retryAfterMs(r.headers);
 			// A server asking for minutes is better left to the pipeline's own retry
@@ -245,19 +272,28 @@ export function transcriptionFields(
 	return fields;
 }
 
-/** Text and languages of a /audio/transcriptions reply (json, verbose_json, or plain text) */
+/**
+ * Text and languages of a /audio/transcriptions reply (json, verbose_json, or plain text).
+ * verbose_json segments that Whisper marks as non-speech or as a repetition loop are left out,
+ * then sound-event tags are stripped.
+ */
 export function parseTranscription(body: string): ChunkReply {
-	let j: { text?: unknown; language?: unknown; languages?: unknown };
+	let j: { text?: unknown; language?: unknown; languages?: unknown; segments?: unknown };
 	try {
 		j = JSON.parse(body);
 	} catch {
-		return { text: body.trim(), languages: [] };
+		return { text: cleanTranscriptText(body), languages: [] };
 	}
 	const languages = normalizeLanguages([
 		...(Array.isArray(j.languages) ? j.languages : []),
 		...(j.language ? [j.language] : [])
 	]);
-	return { text: typeof j.text === 'string' ? j.text.trim() : '', languages };
+	const full = typeof j.text === 'string' ? j.text : '';
+	const seg = textFromSegments(j.segments, full);
+	const text = cleanTranscriptText(seg ? seg.text : full);
+	return seg?.noSpeech === undefined
+		? { text, languages }
+		: { text, languages, noSpeech: seg.noSpeech };
 }
 
 export const openai: Provider = {

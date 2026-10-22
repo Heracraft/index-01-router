@@ -1,6 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
 import { db } from '../db/index.ts';
-import { integrations, type Integration } from '../db/schema.ts';
+import { deliveries, integrations, type Integration } from '../db/schema.ts';
 import { decrypt, encrypt, isEncrypted } from '../crypto.ts';
 import { obsidian } from './obsidian.ts';
 import type { FieldSpec, IntegrationKind } from './types.ts';
@@ -55,15 +55,41 @@ function decryptConfig(row: Integration): Integration {
 	return { ...row, config };
 }
 
+/** True when a stored secret is present and readable: no key opens one AUTH_SECRET lost */
+function secretUsable(v: unknown) {
+	if (typeof v !== 'string' || v === '') return false;
+	if (!isEncrypted(v)) return true;
+	try {
+		decrypt(v);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function toView(row: Integration): IntegrationView {
 	const kind = kinds[row.kind as Kind];
 	const config = { ...row.config };
 	const secretsSet: Record<string, boolean> = {};
 	for (const key of kind?.secrets ?? []) {
-		secretsSet[key] = typeof config[key] === 'string' && config[key] !== '';
+		// A secret AUTH_SECRET can no longer open shows as unset, so the form asks for it again
+		secretsSet[key] = secretUsable(config[key]);
 		config[key] = '';
 	}
 	return { ...row, config, secretsSet };
+}
+
+/** Integrations holding a secret that no key in AUTH_SECRET or AUTH_SECRET_PREVIOUS opens */
+export async function integrationsWithLostSecrets(): Promise<{ id: string; name: string }[]> {
+	const rows = await db.select().from(integrations).orderBy(asc(integrations.createdAt));
+	return rows
+		.filter((row) =>
+			(kinds[row.kind as Kind]?.secrets ?? []).some((key) => {
+				const v = row.config[key];
+				return typeof v === 'string' && isEncrypted(v) && !secretUsable(v);
+			})
+		)
+		.map(({ id, name }) => ({ id, name }));
 }
 
 /** Coerces form or JSON input to the kind's fields. Unknown keys are dropped */
@@ -183,10 +209,24 @@ export async function saveIntegration(input: SaveIntegrationInput): Promise<Inte
 	return decryptConfig(row!);
 }
 
-/** False when it did not exist. Its deliveries cascade */
-export async function deleteIntegration(id: string): Promise<boolean> {
-	const rows = await db.delete(integrations).where(eq(integrations.id, id)).returning();
-	return rows.length > 0;
+/**
+ * Deletes the row; its deliveries cascade. `recordingIds` are the recordings that had one, for
+ * pipeline.settleAfterIntegrationDelete (not called here: pipeline.ts imports this module).
+ */
+export async function deleteIntegration(
+	id: string
+): Promise<{ deleted: boolean; recordingIds: string[] }> {
+	return db.transaction(async (tx) => {
+		const touched = await tx
+			.selectDistinct({ recordingId: deliveries.recordingId })
+			.from(deliveries)
+			.where(eq(deliveries.integrationId, id));
+		const rows = await tx.delete(integrations).where(eq(integrations.id, id)).returning();
+		return {
+			deleted: rows.length > 0,
+			recordingIds: rows.length ? touched.map((r) => r.recordingId) : []
+		};
+	});
 }
 
 /**

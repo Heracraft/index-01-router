@@ -1,7 +1,7 @@
 // Audio lives under DATA_DIR/audio/YYYY/MM/<recordingId>.<ext>; the DB stores the relative path.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { DATA_DIR, FFPROBE_PATH } from '$app/env/private';
@@ -80,6 +80,38 @@ export async function saveAudio(
 
 export async function deleteAudio(relative: string) {
 	await rm(absolutePath(relative), { force: true });
+}
+
+/**
+ * Every file under DATA_DIR/audio/YYYY/MM, as relative paths with their modification time.
+ * Empty when the audio directory does not exist yet.
+ */
+export async function listAudioFiles(): Promise<{ path: string; mtimeMs: number }[]> {
+	const files: { path: string; mtimeMs: number }[] = [];
+	const dirs = async (rel: string, pattern: RegExp) => {
+		try {
+			const entries = await readdir(absolutePath(rel), { withFileTypes: true });
+			return entries.filter((e) => e.isDirectory() && pattern.test(e.name)).map((e) => e.name);
+		} catch (e) {
+			if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+			throw e;
+		}
+	};
+	for (const yyyy of await dirs('audio', /^\d{4}$/)) {
+		for (const mm of await dirs(`audio/${yyyy}`, /^\d{2}$/)) {
+			const dir = `audio/${yyyy}/${mm}`;
+			for (const e of await readdir(absolutePath(dir), { withFileTypes: true })) {
+				if (!e.isFile()) continue;
+				const rel = `${dir}/${e.name}`;
+				try {
+					files.push({ path: rel, mtimeMs: (await stat(absolutePath(rel))).mtimeMs });
+				} catch {
+					// Deleted while listing
+				}
+			}
+		}
+	}
+	return files;
 }
 
 /** Container duration via ffprobe. Null when ffprobe is missing or cannot read the file */

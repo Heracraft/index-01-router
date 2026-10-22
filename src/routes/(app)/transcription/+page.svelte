@@ -60,8 +60,14 @@
 		busy = submitter?.getAttribute('formaction')?.includes('test') ? 'test' : 'save';
 		saved = false;
 		return async ({ update, result }) => {
-			await update({ reset: false });
+			// A test changes nothing stored; reloading would put the stored values back over your edits
+			await update({ reset: false, refreshAll: busy !== 'test' });
 			saved = busy === 'save' && result.type === 'success';
+			// A code typed without Add was posted with the form and is now a chip
+			if (saved) {
+				langInput = '';
+				langError = '';
+			}
 			busy = null;
 		};
 	};
@@ -73,14 +79,16 @@
 			return url;
 		}
 	};
+	const defaultModel = (id: string) => data.providers.find((p) => p.id === id)?.defaultModel ?? '';
+	// The effective model: a blank field means the provider's default
 	const modelOf = (id: string) =>
-		id === 'openai'
+		(id === 'openai'
 			? s.openai.model
 			: id === 'openai-audio'
 				? s.openaiAudio.model
 				: id === 'gemini'
 					? s.gemini.model
-					: '';
+					: '') || defaultModel(id);
 </script>
 
 <PageHead title="Transcription" />
@@ -127,6 +135,7 @@
 					name="openai.model"
 					class="hk-input hk-mono"
 					value={s.openai.model}
+					placeholder={defaultModel('openai')}
 					spellcheck="false"
 				/>
 			</div>
@@ -161,6 +170,7 @@
 					name="openaiAudio.model"
 					class="hk-input hk-mono"
 					value={s.openaiAudio.model}
+					placeholder={defaultModel('openai-audio')}
 					spellcheck="false"
 				/>
 			</div>
@@ -183,6 +193,7 @@
 				name="gemini.model"
 				class="hk-input hk-mono"
 				value={s.gemini.model}
+				placeholder={defaultModel('gemini')}
 				spellcheck="false"
 			/>
 		</div>
@@ -236,6 +247,7 @@
 				<input
 					id="lang-add"
 					class="hk-input hk-mono"
+					name="languages"
 					placeholder="sw"
 					maxlength="3"
 					size="4"
@@ -283,6 +295,9 @@
 				<option value={z} selected={z === data.generalTimezone}>{z.replaceAll('_', ' ')}</option>
 			{/each}
 		</select>
+		<p class="tz-hint">
+			Defaults to TZ ({data.envTimezone.replaceAll('_', ' ')}). Pick another zone to override it.
+		</p>
 	</div>
 
 	<div class="buttons">
@@ -311,6 +326,11 @@
 </form>
 
 <style>
+	.tz-hint {
+		margin: 0.375rem 0 0;
+		font-size: 0.75rem;
+		color: var(--hk-text-3);
+	}
 	fieldset {
 		border: 0;
 		margin: 0;

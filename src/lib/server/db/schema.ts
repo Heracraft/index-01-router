@@ -48,6 +48,8 @@ export const recordings = pgTable(
 		/** Transcript the phone app sent along, kept as a fallback */
 		appTranscript: text(),
 		transcript: text(),
+		/** Goes up by one each time `transcript` changes; deliveries record the one they sent */
+		transcriptVersion: integer().notNull().default(0),
 		/** Comma separated ISO 639-1 codes, most spoken first */
 		languages: text(),
 		/** provider:model that produced `transcript` */
@@ -60,7 +62,8 @@ export const recordings = pgTable(
 	},
 	(t) => [
 		uniqueIndex('recordings_delivery_id').on(t.deliveryId),
-		index('recordings_recorded_at').on(t.recordedAt),
+		// Keyset paging of the list seeks on (recordedAt, id)
+		index('recordings_recorded_at_id').on(t.recordedAt, t.id),
 		index('recordings_status').on(t.status)
 	]
 );
@@ -94,6 +97,8 @@ export const deliveries = pgTable(
 		attempts: integer().notNull().default(0),
 		/** Where it landed, e.g. the note path */
 		target: text(),
+		/** recordings.transcriptVersion this delivery last sent. Lower than the recording's: stale */
+		sentVersion: integer().notNull().default(0),
 		error: text(),
 		createdAt: now(),
 		updatedAt: now()
@@ -101,7 +106,7 @@ export const deliveries = pgTable(
 	(t) => [uniqueIndex('deliveries_recording_integration').on(t.recordingId, t.integrationId)]
 );
 
-/** Every request that reached the webhook, accepted or not. Trimmed to the last 200 */
+/** Every request that reached the webhook, accepted or not. Trimmed by webhook-log.ts */
 export const webhookEvents = pgTable(
 	'webhook_events',
 	{

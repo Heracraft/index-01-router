@@ -30,15 +30,18 @@ from the same compose file: `obsidian-rest` (a headless vault server with MCP) a
 4. Under **Environment Variables**, fill the required ones:
    - `OIDC_ISSUER`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` for a confidential client (see
      [Sign-in](#sign-in-oidc)).
-   - `ALLOWED_EMAILS`: your email. Leave it empty and every account at the issuer gets in.
-   - `TZ`: your zone, for example `Africa/Nairobi`. Daily note dates use it.
+   - `ALLOWED_EMAILS`: your email. The app refuses to start without it. `*` lets every account
+     at the issuer in.
+   - `TZ`: your zone, for example `Africa/Nairobi`. Daily note dates use it unless you pick
+     another zone on the Transcription page.
    - `OPENAI_API_KEY` or `GEMINI_API_KEY`, or set keys later in the UI.
    - `COMPOSE_PROFILES`: `obsidian`, `whisper`, or `obsidian,whisper` to start the sidecars.
    - `OBSIDIAN_API_KEY` when you run `obsidian-rest`: `openssl rand -hex 32`.
 
    Coolify generates `SERVICE_USER_POSTGRES`, `SERVICE_PASSWORD_POSTGRES` and
    `SERVICE_HEX_64_AUTHSECRET` ([magic variables](https://coolify.io/docs/knowledge-base/docker/compose)).
-   Keep `SERVICE_HEX_64_AUTHSECRET` stable: it encrypts the API keys stored in the database.
+   Keep `SERVICE_HEX_64_AUTHSECRET` stable: it signs sessions and encrypts the API keys and
+   webhook secret stored in the database. See [Rotating AUTH_SECRET](#rotating-auth_secret).
 
 5. Deploy. The app applies database migrations on start. `https://index.example.com/healthz`
    answers `ok` once it can reach Postgres.
@@ -75,8 +78,27 @@ Register a client at your provider (Pocket ID, Authentik, Keycloak, Authelia, Go
 - Scopes: `openid profile email`.
 - Either a public client with PKCE (leave `OIDC_CLIENT_SECRET` empty) or a confidential client
   (set `OIDC_CLIENT_SECRET`). PKCE is used in both cases.
+- Post-logout redirect URI: `https://index.example.com/auth/signin`. Sign-out also ends the
+  session at the provider when it has an end-session endpoint.
 - `OIDC_ISSUER` is the issuer URL without `/.well-known/openid-configuration`. The app container
   must be able to reach it.
+
+`ALLOWED_EMAILS` trusts the provider to verify emails. Sign-in fails when the provider marks the
+email unverified, and with `OIDC_REQUIRE_VERIFIED_EMAIL=true` also when it sends no flag. If
+anyone can register at your provider, close registration or set `ALLOWED_SUBS` to your subject
+ID (the `sub` claim). It is checked on top of `ALLOWED_EMAILS`; set `ALLOWED_EMAILS=*` to rely on
+`ALLOWED_SUBS` alone.
+
+Removing an email from `ALLOWED_EMAILS` signs that account out on its next request. **Sign out
+everywhere** in the account menu ends every session on every device.
+
+### Rotating AUTH_SECRET
+
+A new `AUTH_SECRET` signs everyone out. Stored API keys it can no longer decrypt read as blank:
+the app shows a banner and asks for them again, and it replaces the webhook signing secret, which
+you then paste into the Index 01 app. To keep them, put the old value in `AUTH_SECRET_PREVIOUS`
+(comma separated for several). On start the app stores each value again under the new secret,
+so you can remove `AUTH_SECRET_PREVIOUS` after that first start.
 
 ## Obsidian
 
@@ -110,13 +132,19 @@ when you mix languages.
 | -------------- | ----------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `openai`       | `POST /audio/transcriptions`              | `OPENAI_API_KEY` or the UI | Default `gpt-transcribe`. Any OpenAI-compatible server works by changing the base URL: Groq, speaches |
 | `openai-audio` | `POST /chat/completions` with audio input | `OPENAI_API_KEY` or the UI | `gpt-audio` with a verbatim prompt. Returns detected languages                                        |
-| `gemini`       | `generateContent`                         | `GEMINI_API_KEY` or the UI | `gemini-2.5-flash` by default                                                                         |
+| `gemini`       | `generateContent`                         | `GEMINI_API_KEY` or the UI | `gemini-3.8-flash` by default. `gemini-3.5-flash-lite` costs less                                     |
 | `whisper-cpp`  | `POST /inference`                         | none                       | Local, profile `whisper`, URL `http://whisper:8080`. Audio stays on your server                       |
 
 The `whisper` container downloads `WHISPER_MODEL` (default `base`, 148 MB) into its volume on
 first start and runs on `WHISPER_THREADS` CPU threads. `small` is more accurate and about three
 times slower. Whisper models detect one language per 30 seconds, so on mixed-language audio
 they do worse than the hosted providers; the app cuts long recordings at pauses to limit that.
+
+If `whisper` restart-loops after a first start that was cut off, remove the model volume and
+start it again: `docker compose rm -sf whisper && docker volume rm <project>_whisper-models`.
+
+Google serves the Gemini 2.5 models only to keys that used them before. Recordings over 2 hours
+are not transcribed.
 
 ## Local development
 
@@ -126,7 +154,7 @@ Needs Node 24, pnpm, Docker and ffmpeg.
 pnpm install
 cp .env.example .env            # then set AUTH_SECRET: openssl rand -hex 32
 pnpm db:up                      # Postgres on 5432, mock OIDC on 8090
-pnpm dev                        # http://localhost:5173, any username signs in
+pnpm dev                        # http://localhost:5173, any username signs in (ALLOWED_EMAILS="*")
 ```
 
 Optional services from `compose.dev.yaml`:
@@ -135,14 +163,26 @@ Optional services from `compose.dev.yaml`:
   `./data/vault`.
 - `pnpm whisper:up`: whisper.cpp on `http://localhost:8080`.
 
+The dev compose project is `index-01-router-dev`. Containers started before it got that name
+belong to `index-01-router`; move them once (the volumes stay):
+
+```sh
+docker compose -p index-01-router -f compose.dev.yaml down
+pnpm db:up
+```
+
 `pnpm test` runs the unit tests and `pnpm check` the type checker. `pnpm docker:build` builds the
 production image. After changing `src/lib/server/db/schema.ts`, run `pnpm db:generate` and
 commit the new file in `drizzle/`; the app applies it on the next start.
 
-To run the production build without a proxy in front, set the origin, since adapter-node
-assumes https when no `X-Forwarded-Proto` header arrives and the same-origin check then fails:
+To run the production build without a proxy in front, set `ORIGIN` when you build. adapter-node
+reads it only at build time; without it the app assumes https when no `X-Forwarded-Proto`
+arrives, and form posts fail with 403. `node --env-file=.env` loads `PORT`, `BODY_SIZE_LIMIT`
+and the rest of `.env`, and variables set on the command line win over it:
 
 ```sh
-pnpm build
-ORIGIN=http://localhost:3000 BODY_SIZE_LIMIT=50M node build
+ORIGIN=http://localhost:3000 pnpm build
+PUBLIC_URL=http://localhost:3000 node --env-file=.env build
 ```
+
+The Docker image is built without `ORIGIN` and takes the origin from the proxy headers.

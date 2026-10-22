@@ -1,6 +1,6 @@
 import * as client from 'openid-client';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { error, redirect, type RequestEvent } from '@sveltejs/kit';
+import { redirect, type RequestEvent } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
 import {
 	OIDC_ISSUER,
@@ -8,14 +8,48 @@ import {
 	OIDC_CLIENT_SECRET,
 	OIDC_SCOPES,
 	ALLOWED_EMAILS,
+	ALLOWED_SUBS,
+	OIDC_REQUIRE_VERIFIED_EMAIL,
 	AUTH_SECRET
 } from '$app/env/private';
+import { bumpSessionEpoch, sessionEpoch } from './settings.ts';
+import { appOrigin } from './origin.ts';
 
-export type Session = { sub: string; email?: string; name?: string; exp: number };
+/** `epoch` is missing on cookies from before epochs existed, which counts as 0 */
+export type Session = { sub: string; email?: string; name?: string; exp: number; epoch?: number };
 
 const SESSION_COOKIE = 'session';
 const FLOW_COOKIE = 'oidc_flow';
+/** The ID token, kept for id_token_hint at the identity provider's logout */
+const ID_TOKEN_COOKIE = 'oidc_idt';
+/** Carries an error across the identity provider's logout, which drops query parameters */
+const ERROR_COOKIE = 'signin_error';
 const SESSION_DAYS = 30;
+
+/** ALLOWED_EMAILS ("*" allows any) and, when set, ALLOWED_SUBS */
+export function isAllowed(user: { sub?: string; email?: string }) {
+	if (ALLOWED_SUBS?.length && !(user.sub && ALLOWED_SUBS.includes(user.sub))) return false;
+	if (ALLOWED_EMAILS.includes('*')) return true;
+	return !!user.email && ALLOWED_EMAILS.includes(user.email.toLowerCase());
+}
+
+/**
+ * Why a fresh sign-in is refused, or null. With an email allowlist in effect, an email the issuer
+ * marks unverified is refused; an absent flag passes unless OIDC_REQUIRE_VERIFIED_EMAIL is set,
+ * since many issuers omit it.
+ */
+export function signInDenial(user: { sub?: string; email?: string; verified?: boolean }) {
+	if (!isAllowed(user)) return 'denied';
+	if (ALLOWED_EMAILS.includes('*')) return null;
+	if (user.verified === false || (OIDC_REQUIRE_VERIFIED_EMAIL && user.verified !== true)) {
+		return 'unverified';
+	}
+	return null;
+}
+
+/** Some issuers send the flag as a string */
+const flag = (v: unknown) =>
+	v === true || v === 'true' ? true : v === false || v === 'false' ? false : undefined;
 
 let configPromise: Promise<client.Configuration> | undefined;
 
@@ -65,19 +99,54 @@ const cookieOpts = (url: URL) => ({
 	secure: url.protocol === 'https:'
 });
 
-/** Only same-origin relative paths survive the round trip */
-function safeNext(value: string | null | undefined) {
-	return value && value.startsWith('/') && !value.startsWith('//') ? value : '/';
+/** Only same-origin paths survive the round trip. Parsing catches '/\\host' and tab tricks */
+export function safeNext(value: string | null | undefined) {
+	if (!value || !value.startsWith('/')) return '/';
+	try {
+		const base = 'http://n.invalid';
+		const u = new URL(value, base);
+		return u.origin === base ? u.pathname + u.search + u.hash : '/';
+	} catch {
+		return '/';
+	}
+}
+
+async function configOrSignInError(): Promise<client.Configuration> {
+	try {
+		return await getConfig();
+	} catch (e) {
+		console.error('OIDC discovery failed', e);
+		redirect(303, '/auth/signin?error=idp');
+	}
+}
+
+/** The IdP's logout URL, or null when it has none or cannot be reached */
+async function endSessionUrl(event: RequestEvent, idToken: string | undefined) {
+	try {
+		const config = await getConfig();
+		if (!config.serverMetadata().end_session_endpoint) return null;
+		const params: Record<string, string> = {
+			client_id: OIDC_CLIENT_ID,
+			post_logout_redirect_uri: new URL('/auth/signin', appOrigin(event.url)).href
+		};
+		if (idToken) params.id_token_hint = idToken;
+		return client.buildEndSessionUrl(config, params).href;
+	} catch (e) {
+		console.error('OIDC logout URL unavailable', e);
+		return null;
+	}
+}
+
+/** Error code for the sign-in page, from ?error= or from the cookie set before an IdP logout */
+export function signInError(event: RequestEvent) {
+	const fromCookie = event.cookies.get(ERROR_COOKIE);
+	if (fromCookie) event.cookies.delete(ERROR_COOKIE, { path: '/' });
+	return event.url.searchParams.get('error') ?? fromCookie ?? null;
 }
 
 export async function signIn(event: RequestEvent): Promise<never> {
-	let config: client.Configuration;
-	try {
-		config = await getConfig();
-	} catch (e) {
-		console.error('OIDC discovery failed', e);
-		error(502, `Could not reach the identity provider at ${OIDC_ISSUER}`);
-	}
+	const form = await event.request.formData().catch(() => null);
+	const config = await configOrSignInError();
 	const code_verifier = client.randomPKCECodeVerifier();
 	const code_challenge = await client.calculatePKCECodeChallenge(code_verifier);
 	const state = client.randomState();
@@ -87,24 +156,27 @@ export async function signIn(event: RequestEvent): Promise<never> {
 		maxAge: 600
 	});
 	const url = client.buildAuthorizationUrl(config, {
-		redirect_uri: new URL('/auth/callback', event.url.origin).href,
+		redirect_uri: new URL('/auth/callback', appOrigin(event.url)).href,
 		scope: OIDC_SCOPES,
 		code_challenge,
 		code_challenge_method: 'S256',
-		state
+		state,
+		// After a denial: make the IdP ask for credentials instead of reusing its session
+		...(form?.get('switch') ? { prompt: 'login' } : {})
 	});
 	redirect(303, url, { external: true });
 }
 
 export async function callback(event: RequestEvent): Promise<never> {
-	const config = await getConfig();
 	const flow = verify<{ code_verifier: string; state: string; next: string; exp: number }>(
 		event.cookies.get(FLOW_COOKIE)
 	);
 	event.cookies.delete(FLOW_COOKIE, { path: '/' });
 	if (!flow || flow.exp < Date.now()) redirect(303, '/auth/signin');
+	const config = await configOrSignInError();
 
-	const callbackUrl = new URL(event.url);
+	// Same redirect_uri as signIn sent, which openid-client builds from origin and path
+	const callbackUrl = new URL(event.url.pathname + event.url.search, appOrigin(event.url));
 	let tokens: Awaited<ReturnType<typeof client.authorizationCodeGrant>>;
 	try {
 		tokens = await client.authorizationCodeGrant(config, callbackUrl, {
@@ -119,26 +191,47 @@ export async function callback(event: RequestEvent): Promise<never> {
 	if (!claims) redirect(303, '/auth/signin?error=exchange');
 
 	let email = typeof claims.email === 'string' ? claims.email : undefined;
+	let verified = flag(claims.email_verified);
 	let name = typeof claims.name === 'string' ? claims.name : undefined;
-	if (!email || !name) {
+	if (!email || verified === undefined || !name) {
 		try {
 			const info = await client.fetchUserInfo(config, tokens.access_token, claims.sub);
-			email ??= info.email;
+			if (!email && typeof info.email === 'string') {
+				email = info.email;
+				verified = flag(info.email_verified);
+			} else if (email === info.email) {
+				verified ??= flag(info.email_verified);
+			}
 			name ??= info.name ?? info.preferred_username;
 		} catch {
 			// userinfo is optional
 		}
 	}
-	if (ALLOWED_EMAILS.length && !(email && ALLOWED_EMAILS.includes(email.toLowerCase()))) {
-		redirect(303, '/auth/signin?error=denied');
+
+	const denial = signInDenial({ sub: claims.sub, email, verified });
+	if (denial) {
+		// End the IdP session too, or the next sign-in logs the same account straight back in
+		const logout = await endSessionUrl(event, tokens.id_token);
+		if (logout) {
+			event.cookies.set(ERROR_COOKIE, denial, { ...cookieOpts(event.url), maxAge: 600 });
+			redirect(303, logout, { external: true });
+		}
+		redirect(303, `/auth/signin?error=${denial}`);
 	}
 
 	setSession(event, {
 		sub: claims.sub,
 		email,
 		name,
-		exp: Date.now() + SESSION_DAYS * 86400_000
+		exp: Date.now() + SESSION_DAYS * 86400_000,
+		epoch: await sessionEpoch()
 	});
+	if (tokens.id_token) {
+		event.cookies.set(ID_TOKEN_COOKIE, tokens.id_token, {
+			...cookieOpts(event.url),
+			maxAge: SESSION_DAYS * 86400
+		});
+	}
 	redirect(303, safeNext(flow.next));
 }
 
@@ -149,13 +242,27 @@ function setSession(event: RequestEvent, s: Session) {
 	});
 }
 
-export function signOut(event: RequestEvent): never {
+function clearSession(event: RequestEvent) {
 	event.cookies.delete(SESSION_COOKIE, { path: '/' });
+	event.cookies.delete(ID_TOKEN_COOKIE, { path: '/' });
+}
+
+/** Ends the local session, then the IdP session when the IdP has a logout endpoint */
+export async function signOut(event: RequestEvent, everywhere = false): Promise<never> {
+	if (everywhere && event.locals.session) await bumpSessionEpoch();
+	const idToken = event.cookies.get(ID_TOKEN_COOKIE);
+	clearSession(event);
+	const logout = await endSessionUrl(event, idToken);
+	if (logout) redirect(303, logout, { external: true });
 	redirect(303, '/auth/signin');
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
-	const s = verify<Session>(event.cookies.get(SESSION_COOKIE));
-	event.locals.session = s && s.exp > Date.now() ? s : null;
+	let s = verify<Session>(event.cookies.get(SESSION_COOKIE));
+	if (s && (s.exp <= Date.now() || !isAllowed(s) || (s.epoch ?? 0) !== (await sessionEpoch()))) {
+		clearSession(event);
+		s = null;
+	}
+	event.locals.session = s;
 	return resolve(event);
 };

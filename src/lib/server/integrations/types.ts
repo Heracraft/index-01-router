@@ -7,6 +7,13 @@ export interface DeliverContext {
 	config: Record<string, unknown>;
 	general: GeneralSettings;
 	signal?: AbortSignal;
+	/**
+	 * True when no earlier attempt of this delivery ran, so nothing of it can be in the target
+	 * yet. A kind then writes the entry even when identical text is already there (two
+	 * recordings saying the same thing in the same minute). Otherwise it skips an entry already
+	 * present, so a retry after a lost response does not add a second copy
+	 */
+	firstAttempt?: boolean;
 }
 
 export interface DeliverResult {

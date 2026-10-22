@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { hasSignatureHeaders, verifyIndexWebhook } from './verify.ts';
+import {
+	hasSignatureHeaders,
+	precheckIndexHeaders,
+	verifyIndexSignature,
+	verifyIndexWebhook
+} from './verify.ts';
 import {
 	FIXTURE_A,
 	buildIndexBody,
@@ -138,5 +143,22 @@ describe('verifyIndexWebhook', () => {
 		expect(hasSignatureHeaders(new Headers({ 'x-index-trigger': 'single-click-hold' }))).toBe(
 			false
 		);
+	});
+
+	it('prechecks headers without the body, then verifies the signature', () => {
+		const pre = precheckIndexHeaders(fixtureAHeaders(), secret, { nowSec: now });
+		expect(pre.ok).toBe(true);
+		if (!pre.ok) return;
+		expect(verifyIndexSignature(pre, fixtureABody(), secret)).toMatchObject({ ok: true });
+		const body = fixtureABody();
+		body[0] ^= 1;
+		expect(verifyIndexSignature(pre, body, secret)).toMatchObject({ reason: 'bad signature' });
+		expect(
+			precheckIndexHeaders(fixtureAHeaders(), secret, { nowSec: FIXTURE_A.timestamp + 301 })
+		).toMatchObject({ ok: false, status: 401, reason: 'timestamp outside tolerance' });
+		expect(precheckIndexHeaders(fixtureAHeaders(), '', { nowSec: now })).toMatchObject({
+			ok: false,
+			reason: 'no signing secret configured'
+		});
 	});
 });

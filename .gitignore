@@ -22,3 +22,6 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /data
+
+# Agent/browser tooling output
+/.playwright-mcp

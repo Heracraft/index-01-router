@@ -4,19 +4,23 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FFMPEG_PATH } from '$app/env/private';
 import { SAMPLE_RATE } from './chunk.ts';
 import { TranscribeError, type Upload, type UploadFormat } from './types.ts';
 
-const ffmpegPath = () => process.env.FFMPEG_PATH || 'ffmpeg';
-
-function ffmpeg(args: string[], stdin: Uint8Array | null, timeoutMs = 5 * 60_000): Promise<Buffer> {
+/** Runs ffmpeg, handing each stdout chunk to `onData`. Rejects with a TranscribeError */
+function runFfmpeg(
+	args: string[],
+	stdin: Uint8Array | null,
+	onData: (d: Buffer) => void,
+	timeoutMs = 5 * 60_000
+): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const p = spawn(ffmpegPath(), ['-hide_banner', '-loglevel', 'error', ...args], {
+		const p = spawn(FFMPEG_PATH || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', ...args], {
 			stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe']
 		});
-		const out: Buffer[] = [];
 		let err = '';
-		p.stdout!.on('data', (d: Buffer) => out.push(d));
+		p.stdout!.on('data', onData);
 		p.stderr!.on('data', (d) => {
 			err += d;
 			if (err.length > 16_000) err = err.slice(-8000);
@@ -28,7 +32,7 @@ function ffmpeg(args: string[], stdin: Uint8Array | null, timeoutMs = 5 * 60_000
 		});
 		p.on('close', (code) => {
 			clearTimeout(timer);
-			if (code === 0) return resolve(Buffer.concat(out));
+			if (code === 0) return resolve();
 			if (/Invalid data found|could not find codec parameters|moov atom not found/i.test(err)) {
 				return reject(new TranscribeError('The file is not audio ffmpeg can read', false));
 			}
@@ -43,15 +47,40 @@ function ffmpeg(args: string[], stdin: Uint8Array | null, timeoutMs = 5 * 60_000
 	});
 }
 
-/** Any audio or video file to 16 kHz mono signed 16-bit PCM */
-export async function decodePcm(path: string): Promise<Int16Array> {
-	const b = await ffmpeg(
-		['-i', path, '-vn', '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', 'pipe:1'],
-		null
+export interface DecodeOptions {
+	/** Expected length, to size the buffer once. Default 10 minutes */
+	expectedSeconds?: number;
+	/** ffmpeg stops after this many seconds */
+	maxSeconds?: number;
+}
+
+/**
+ * Any audio or video file to 16 kHz mono signed 16-bit PCM. Samples stream into one buffer sized
+ * from the expected length (doubled when it runs out), so peak memory stays near one copy of
+ * the PCM: 32 KB per second of audio.
+ */
+export async function decodePcm(path: string, opts: DecodeOptions = {}): Promise<Int16Array> {
+	const expected = opts.expectedSeconds && opts.expectedSeconds > 0 ? opts.expectedSeconds : 600;
+	let buf = new Uint8Array(Math.ceil(expected * SAMPLE_RATE * 1.02) * 2);
+	let offset = 0;
+	const limit = opts.maxSeconds ? ['-t', String(opts.maxSeconds)] : [];
+	await runFfmpeg(
+		['-i', path, '-vn', ...limit, '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', 'pipe:1'],
+		null,
+		(d) => {
+			if (offset + d.byteLength > buf.byteLength) {
+				let size = buf.byteLength * 2;
+				while (size < offset + d.byteLength) size *= 2;
+				const next = new Uint8Array(size);
+				next.set(buf.subarray(0, offset));
+				buf = next;
+			}
+			buf.set(d, offset);
+			offset += d.byteLength;
+		}
 	);
-	const copy = new Uint8Array(b.byteLength - (b.byteLength % 2));
-	copy.set(b.subarray(0, copy.byteLength));
-	return new Int16Array(copy.buffer);
+	// An odd trailing byte is half a sample; the view leaves it out
+	return new Int16Array(buf.buffer, 0, offset >> 1);
 }
 
 const codecs: Record<UploadFormat, { args: string[]; mime: string; ext: string }> = {
@@ -79,7 +108,7 @@ export async function encodePcm(
 	try {
 		const out = join(dir, `chunk.${c.ext}`);
 		const input = ['-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1', '-i', 'pipe:0'];
-		await ffmpeg([...input, ...c.args, '-y', out], bytes);
+		await runFfmpeg([...input, ...c.args, '-y', out], bytes, () => {});
 		return { bytes: new Uint8Array(await readFile(out)), mime: c.mime, name: `audio.${c.ext}` };
 	} finally {
 		await rm(dir, { recursive: true, force: true });

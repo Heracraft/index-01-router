@@ -33,6 +33,11 @@ describe('renderTemplate', () => {
 		});
 		expect(r).toBe('||');
 	});
+
+	it('fills the heading', () => {
+		expect(renderTemplate('## {{heading}}\n', { ...vars, heading: 'Inbox' })).toBe('## Inbox\n');
+		expect(renderTemplate('## {{heading}}', vars)).toBe('## ');
+	});
 });
 
 describe('renderEntry', () => {

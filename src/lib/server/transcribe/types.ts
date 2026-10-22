@@ -45,6 +45,8 @@ export interface ChunkReply {
 	text: string;
 	/** Codes as the provider returned them; index.ts normalises */
 	languages: string[];
+	/** Highest no_speech_prob among the kept segments, when the reply has them */
+	noSpeech?: number;
 }
 
 export interface RequestContext {

@@ -24,7 +24,8 @@ WORKDIR /app
 COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/
 ENV NODE_ENV=production \
 	PORT=3000 \
-	BODY_SIZE_LIMIT=50M \
+	BODY_SIZE_LIMIT=51M \
+	SHUTDOWN_TIMEOUT=10 \
 	PROTOCOL_HEADER=x-forwarded-proto \
 	HOST_HEADER=x-forwarded-host \
 	ADDRESS_HEADER=x-forwarded-for \

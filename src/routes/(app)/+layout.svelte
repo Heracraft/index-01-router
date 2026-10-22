@@ -72,26 +72,55 @@
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let retry: ReturnType<typeof setTimeout> | undefined;
 		let stopped = false;
+		const refreshSoon = () => {
+			clearTimeout(timer);
+			timer = setTimeout(() => refreshAll(), 400);
+		};
 
 		const connect = () => {
 			source = new EventSource('/events');
 			source.onopen = () => (live.connected = true);
 			source.onmessage = (e) => {
-				if (!wantsRefresh(e.data)) return;
-				clearTimeout(timer);
-				timer = setTimeout(() => refreshAll(), 400);
+				if (wantsRefresh(e.data)) refreshSoon();
 			};
+			// One per logged webhook request, accepted or not
+			source.addEventListener('webhook', () => {
+				if (page.route.id === '/(app)/webhook') refreshSoon();
+			});
 			source.onerror = () => {
 				live.connected = false;
 				// EventSource retries by itself unless the server closed it for good (auth, 5xx)
-				if (source?.readyState === EventSource.CLOSED && !stopped) {
-					retry = setTimeout(connect, 5000);
-				}
+				if (source?.readyState !== EventSource.CLOSED || stopped) return;
+				fetch('/events', { method: 'HEAD' })
+					.then((r) => {
+						if (stopped) return;
+						// Session ended: the reload gets the same 401 and the error page sends you to sign-in
+						if (r.status === 401) refreshAll();
+						else retry = setTimeout(connect, 5000);
+					})
+					.catch(() => {
+						if (!stopped) retry = setTimeout(connect, 5000);
+					});
 			};
 		};
 		connect();
+		// A page left for another one can stay in the back/forward cache with its stream open,
+		// and each one held takes one of the browser's six connections to this host. Close it
+		// on the way out and open a new one if the page comes back
+		const onHide = () => {
+			clearTimeout(retry);
+			source?.close();
+			live.connected = false;
+		};
+		const onShow = (e: PageTransitionEvent) => {
+			if (e.persisted && !stopped) connect();
+		};
+		window.addEventListener('pagehide', onHide);
+		window.addEventListener('pageshow', onShow);
 		return () => {
 			stopped = true;
+			window.removeEventListener('pagehide', onHide);
+			window.removeEventListener('pageshow', onShow);
 			clearTimeout(timer);
 			clearTimeout(retry);
 			source?.close();
@@ -134,6 +163,9 @@
 					</div>
 					<form method="POST" action="/auth/signout">
 						<button class="menu-item">Sign out</button>
+						<button class="menu-item menu-item--tight" name="everywhere" value="1">
+							Sign out everywhere
+						</button>
 					</form>
 				</div>
 			</details>
@@ -166,6 +198,29 @@
 		</nav>
 
 		<main id="main" tabindex="-1">
+			{#if data.lostKeys.length}
+				<p class="hk-banner" role="alert">
+					AUTH_SECRET changed, so the stored {data.lostKeys.join(' and ')} could not be read.
+					<a href={resolve('/(app)/transcription')}>
+						Enter {data.lostKeys.length > 1 ? 'them' : 'it'} again
+					</a>
+				</p>
+			{/if}
+			{#if data.lostIntegrations.length}
+				<p class="hk-banner" role="alert">
+					AUTH_SECRET changed, so the stored API key of
+					{#each data.lostIntegrations as it, i (it.id)}{i ? ', ' : ''}<a
+							href={resolve('/(app)/integrations/[id]', { id: it.id })}>{it.name}</a
+						>{/each}
+					could not be read. Deliveries there fail until you enter it again.
+				</p>
+			{/if}
+			{#if data.webhookSecretReset}
+				<p class="hk-banner" role="alert">
+					AUTH_SECRET changed, so the webhook signing secret was replaced.
+					<a href={resolve('/(app)/webhook')}>Paste the new one into the Index 01 app</a>
+				</p>
+			{/if}
 			{@render children()}
 		</main>
 	</div>
@@ -306,6 +361,9 @@
 		font-size: 0.8125rem;
 		color: var(--hk-text-2);
 		cursor: pointer;
+	}
+	.menu-item--tight {
+		margin-top: 0;
 	}
 	.menu-item:hover {
 		background: var(--hk-hover);

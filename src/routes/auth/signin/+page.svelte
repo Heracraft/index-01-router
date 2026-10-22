@@ -6,7 +6,9 @@
 
 	const ERRORS: Record<string, string> = {
 		denied: 'This account is not on the allow list. Sign in with an allowed account.',
-		exchange: 'The identity provider rejected the sign-in. Try again.'
+		unverified: 'The identity provider has not verified this email. Verify it, then sign in again.',
+		exchange: 'The identity provider rejected the sign-in. Try again.',
+		idp: 'Could not reach the identity provider. Try again in a moment.'
 	};
 	const error = $derived(data.error ? (ERRORS[data.error] ?? 'Sign-in failed. Try again.') : null);
 	let busy = $state(false);
@@ -28,6 +30,9 @@
 			<p class="hk-banner hk-banner--err" role="alert">{error}</p>
 		{/if}
 		<form method="POST" onsubmit={() => (busy = true)}>
+			{#if data.error === 'denied' || data.error === 'unverified'}
+				<input type="hidden" name="switch" value="1" />
+			{/if}
 			<button class="hk-btn hk-btn-lg" aria-busy={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
 		</form>
 	</div>

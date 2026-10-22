@@ -19,11 +19,14 @@ const dbUrl = process.env.PIPELINE_TEST_DATABASE_URL;
 vi.mock('$app/env/private', () => ({
 	DATABASE_URL: process.env.PIPELINE_TEST_DATABASE_URL ?? 'postgres://invalid',
 	AUTH_SECRET: 'live-test-secret-live-test-secret-0123',
+	AUTH_SECRET_PREVIOUS: [],
 	DATA_DIR: '/nonexistent',
 	FFPROBE_PATH: 'ffprobe',
+	FFMPEG_PATH: 'ffmpeg',
 	INDEX01_WEBHOOK_SECRET: undefined,
 	OPENAI_API_KEY: undefined,
-	GEMINI_API_KEY: undefined
+	GEMINI_API_KEY: undefined,
+	TZ: 'UTC'
 }));
 
 const fixtures = path.resolve(import.meta.dirname, '../../../../scripts/sample-vault');
@@ -51,6 +54,7 @@ function recording(over: Partial<Recording>): Recording {
 		languages: null,
 		transcribedBy: 'test',
 		transcribeMs: null,
+		transcriptVersion: 1,
 		status: 'routing',
 		error: null,
 		attempts: 0,
@@ -161,11 +165,74 @@ describe.skipIf(!url || !vault)('obsidian live', () => {
 		expect(count(text, '## Notes')).toBe(1);
 	});
 
+	it('keeps a shorter entry that an earlier one contains', async () => {
+		await deliver({ recordedAt: at('2026-10-29', '10:00'), transcript: 'Buy milk and eggs' });
+		const res = await deliver({ recordedAt: at('2026-10-29', '10:00'), transcript: 'Buy milk' });
+		expect(res.target).toBe(daily('2026-10-29'));
+		const text = await read(daily('2026-10-29'));
+		expect(text).toContain('- 10:00 Buy milk and eggs\n- 10:00 Buy milk\n');
+		expect(count(text, 'Buy milk')).toBe(2);
+	});
+
+	it('places entries in recording order', async () => {
+		await deliver({ recordedAt: at('2026-10-30', '09:02'), transcript: 'short two' });
+		await deliver({ recordedAt: at('2026-10-30', '09:05'), transcript: 'three' });
+		await deliver({ recordedAt: at('2026-10-30', '09:00'), transcript: 'long one' });
+		await deliver({ recordedAt: at('2026-10-30', '09:00'), transcript: 'long one' });
+		const text = await read(daily('2026-10-30'));
+		expect(text).toBe(
+			'# 2026-10-30\n\n## Notes\n- 09:00 long one\n- 09:02 short two\n- 09:05 three\n'
+		);
+	});
+
+	it('inserts in order without touching the next section', async () => {
+		await deliver({ recordedAt: at('2026-10-21', '08:00'), transcript: 'Before coffee' });
+		const text = await read(daily('2026-10-21'));
+		expect(text).toContain(
+			'## Notes\n- 08:00 Before coffee\n- 08:30 Coffee with Amina about the router\n'
+		);
+		expect(text).toContain('- 09:10 Third entry\n\n## Journal\nQuiet morning.');
+	});
+
+	it('appends at the end when the entry does not start with the time', async () => {
+		const over = { entryTemplate: '- {{transcript}} ({{time}})' };
+		await deliver({ recordedAt: at('2026-10-31', '09:02'), transcript: 'second' }, over);
+		await deliver({ recordedAt: at('2026-10-31', '09:00'), transcript: 'first' }, over);
+		expect(await read(daily('2026-10-31'))).toContain(
+			'## Notes\n- second (09:02)\n- first (09:00)\n'
+		);
+	});
+
+	it('starts a new note with the configured heading', async () => {
+		await deliver(
+			{ recordedAt: at('2026-10-30', '07:00'), transcript: 'Inbox item' },
+			{
+				heading: 'Inbox',
+				notePath: `${run}/Inbox/{{date:YYYY-MM-DD}}.md`,
+				newNoteTemplate: undefined
+			}
+		);
+		expect(await read(`${run}/Inbox/2026-10-30.md`)).toBe('## Inbox\n- 07:00 Inbox item\n');
+	});
+
 	it('writes a retried entry once', async () => {
 		const rec = { recordedAt: at('2026-10-23', '11:11'), transcript: 'Only once please' };
 		await deliver(rec);
 		await deliver(rec);
 		expect(count(await read(daily('2026-10-23')), 'Only once please')).toBe(1);
+	});
+
+	it('writes identical text from two recordings in the same minute twice', async () => {
+		const rec = recording({ recordedAt: at('2026-10-23', '12:12'), transcript: 'Said it twice' });
+		for (const id of ['twice-a', 'twice-b']) {
+			await obsidian.deliver({
+				recording: { ...rec, id },
+				config: config(),
+				general,
+				firstAttempt: true
+			});
+		}
+		expect(count(await read(daily('2026-10-23')), '- 12:12 Said it twice\n')).toBe(2);
 	});
 
 	it('keeps Swahili and other unicode text intact', async () => {
@@ -289,6 +356,10 @@ describe.skipIf(!url || !vault || !dbUrl)('pipeline live', async () => {
 				transcribeCalls.push(input.path);
 				await new Promise((r) => setTimeout(r, 50));
 				if (input.path.endsWith('bad-key.m4a')) throw new TranscribeError('Invalid API key', false);
+				if (input.path.endsWith('changing.m4a')) {
+					const n = transcribeCalls.filter((p) => p === input.path).length;
+					return { text: `Draft ${n}`, languages: ['en'], by: 'fake:model' };
+				}
 				if (
 					input.path.endsWith('flaky.m4a') &&
 					transcribeCalls.filter((p) => p === input.path).length < 3
@@ -507,5 +578,128 @@ describe.skipIf(!url || !vault || !dbUrl)('pipeline live', async () => {
 		const { row, ds } = await settle(rec.id);
 		expect(row.status).toBe('done');
 		expect(ds).toHaveLength(0);
+	});
+
+	const restore = () =>
+		saveIntegration({
+			id: integrationId,
+			kind: 'obsidian',
+			name: 'Test vault',
+			enabled: true,
+			triggers: [],
+			config: config({ notePath: `${run}/Pipeline/{{date:YYYY-MM-DD}}.md` })
+		});
+
+	it('marks a sent delivery stale after a new transcript and resends only on request', async () => {
+		await restore();
+		const note = `${run}/Pipeline/2026-11-09.md`;
+		const rec = await insert({
+			audioPath: 'audio/changing.m4a',
+			audioMime: 'audio/mp4',
+			recordedAt: at('2026-11-09', '09:00')
+		});
+		pipeline.enqueue(rec.id);
+		let { row, ds } = await settle(rec.id);
+		expect(row).toMatchObject({ status: 'done', transcript: 'Draft 1', transcriptVersion: 1 });
+		expect(ds[0]).toMatchObject({ status: 'sent', sentVersion: 1, attempts: 1 });
+
+		await pipeline.retryRecording(rec.id, 'transcribe');
+		({ row, ds } = await settle(rec.id));
+		expect(row).toMatchObject({ status: 'done', transcript: 'Draft 2', transcriptVersion: 2 });
+		// Left alone: stale, nothing written
+		expect(ds[0]).toMatchObject({ status: 'sent', sentVersion: 1, attempts: 1 });
+		expect(await read(note)).not.toContain('Draft 2');
+
+		await pipeline.redeliver(ds[0]!.id);
+		({ row, ds } = await settle(rec.id));
+		expect(row.status).toBe('done');
+		expect(ds[0]).toMatchObject({ status: 'sent', sentVersion: 2, attempts: 2 });
+		const text = await read(note);
+		expect(text).toContain('- 09:00 Draft 1\n- 09:00 Draft 2\n');
+
+		// Sending the same transcript again finds it in the note
+		await pipeline.redeliver(ds[0]!.id);
+		await settle(rec.id);
+		expect(await read(note)).toBe(text);
+	});
+
+	it('keeps the version when a new transcription gives the same text', async () => {
+		await restore();
+		const rec = await insert({
+			appTranscript: 'Same words',
+			recordedAt: at('2026-11-10', '09:00')
+		});
+		pipeline.enqueue(rec.id);
+		const first = await settle(rec.id);
+		expect(first.row.transcriptVersion).toBe(1);
+		await pipeline.retryRecording(rec.id, 'transcribe');
+		const { row, ds } = await settle(rec.id);
+		expect(row.transcriptVersion).toBe(1);
+		expect(ds[0]).toMatchObject({ status: 'sent', sentVersion: 1 });
+	});
+
+	it('settles a failed recording when the failing integration is deleted', async () => {
+		await restore();
+		const broken = await saveIntegration({
+			kind: 'obsidian',
+			name: 'Broken vault',
+			enabled: true,
+			triggers: [],
+			config: { ...config(), apiKey: 'wrong' }
+		});
+		const rec = await insert({
+			audioPath: 'audio/bad-key.m4a',
+			appTranscript: 'Two places',
+			recordedAt: at('2026-11-11', '09:00')
+		});
+		pipeline.enqueue(rec.id);
+		let { row, ds } = await settle(rec.id);
+		expect(row).toMatchObject({
+			status: 'failed',
+			error: '1 of 2 deliveries failed. Used the app transcript: Invalid API key'
+		});
+		expect(ds.map((d) => d.status).sort()).toEqual(['failed', 'sent']);
+
+		const { deleted, recordingIds } = await deleteIntegration(broken.id);
+		expect(deleted).toBe(true);
+		expect(recordingIds).toEqual([rec.id]);
+		await pipeline.settleAfterIntegrationDelete(recordingIds);
+		({ row, ds } = await settle(rec.id));
+		expect(row).toMatchObject({
+			status: 'done',
+			error: 'Used the app transcript: Invalid API key'
+		});
+		expect(ds.map((d) => d.status)).toEqual(['sent']);
+	});
+
+	it('rebuilds the error when other deliveries still fail', async () => {
+		await restore();
+		const brokenA = await saveIntegration({
+			kind: 'obsidian',
+			name: 'Broken A',
+			enabled: true,
+			triggers: [],
+			config: { ...config(), apiKey: 'wrong' }
+		});
+		const brokenB = await saveIntegration({
+			kind: 'obsidian',
+			name: 'Broken B',
+			enabled: true,
+			triggers: [],
+			config: { ...config(), apiKey: 'wrong' }
+		});
+		const rec = await insert({
+			appTranscript: 'Three places',
+			recordedAt: at('2026-11-12', '09:00')
+		});
+		pipeline.enqueue(rec.id);
+		let { row } = await settle(rec.id);
+		expect(row.error).toBe('2 of 3 deliveries failed');
+		await pipeline.settleAfterIntegrationDelete((await deleteIntegration(brokenA.id)).recordingIds);
+		({ row } = await settle(rec.id));
+		expect(row).toMatchObject({ status: 'failed', error: '1 of 2 deliveries failed' });
+		await pipeline.settleAfterIntegrationDelete((await deleteIntegration(brokenB.id)).recordingIds);
+		({ row } = await settle(rec.id));
+		expect(row).toMatchObject({ status: 'done', error: null });
 	});
 });

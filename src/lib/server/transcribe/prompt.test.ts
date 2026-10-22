@@ -18,11 +18,28 @@ describe('normalizeLanguage', () => {
 		['swa', 'sw'],
 		['eng', 'en'],
 		[{ code: 'fr' }, 'fr'],
+		['maori', 'mi'],
+		['Māori', 'mi'],
+		['Bengali', 'bn'],
+		['nynorsk', 'nn'],
+		['myanmar', 'my'],
+		['tagalog', 'tl'],
+		['hawaiian', 'haw'],
 		['klingonese', null],
 		['', null],
 		[42, null]
 	])('%j -> %j', (input, out) => {
 		expect(normalizeLanguage(input)).toBe(out);
+	});
+
+	it('knows every language name Whisper returns', () => {
+		// whisper/tokenizer.py LANGUAGES
+		const whisper =
+			'english chinese german spanish russian korean french japanese portuguese turkish polish catalan dutch arabic swedish italian indonesian hindi finnish vietnamese hebrew ukrainian greek malay czech romanian danish hungarian tamil norwegian thai urdu croatian bulgarian lithuanian latin maori malayalam welsh slovak telugu persian latvian bengali serbian azerbaijani slovenian kannada estonian macedonian breton basque icelandic armenian nepali mongolian bosnian kazakh albanian swahili galician marathi punjabi sinhala khmer shona yoruba somali afrikaans occitan georgian belarusian tajik sindhi gujarati amharic yiddish lao uzbek faroese haitian_creole pashto turkmen nynorsk maltese sanskrit luxembourgish myanmar tibetan tagalog malagasy assamese tatar hawaiian lingala hausa bashkir javanese sundanese cantonese'
+				.split(' ')
+				.map((n) => n.replace('_', ' '));
+		expect(whisper).toHaveLength(100);
+		expect(whisper.filter((n) => normalizeLanguage(n) === null)).toEqual([]);
 	});
 
 	it('dedupes lists', () => {

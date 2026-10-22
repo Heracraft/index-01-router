@@ -1,6 +1,7 @@
 <script lang="ts">
 	/* A stored secret never reaches the browser. Saved shows as a state with Replace; a blank
-	   submit keeps the stored value. `env` names the variable that supplies it instead. */
+	   submit keeps the stored value. `env` names the variable used while nothing is stored;
+	   a stored value overrides it. */
 	import Icon from './Icon.svelte';
 
 	interface Props {
@@ -9,7 +10,7 @@
 		label: string;
 		/** A value is stored */
 		set: boolean;
-		/** Env variable that supplies the value; the field is read only */
+		/** Env variable used when nothing is stored */
 		env?: string | null;
 		invalid?: boolean;
 		/** Posted as `<name>.clear=1` when Remove is pressed */
@@ -30,28 +31,39 @@
 	let replacing = $state(false);
 	let cleared = $state(false);
 	let input = $state<HTMLInputElement>();
+
+	// A save that stores or drops the value shows the new state instead of the input
+	let lastSet: boolean | undefined;
+	$effect.pre(() => {
+		if (lastSet !== undefined && set !== lastSet) {
+			replacing = false;
+			cleared = false;
+		}
+		lastSet = set;
+	});
+
+	async function replace() {
+		replacing = true;
+		await Promise.resolve();
+		input?.focus();
+	}
 </script>
 
 <div>
 	<label class="hk-field-label" for={id}>{label}</label>
-	{#if env && !set}
+	{#if env && !set && !replacing}
 		<div class="state">
 			<Icon name="lock" />
-			<span class="grow">From <span class="hk-mono">{env}</span></span>
+			<span class="grow" {id}>From <span class="hk-mono">{env}</span></span>
+			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={replace}>Replace</button>
 		</div>
 	{:else if set && !replacing && !cleared}
 		<div class="state">
 			<span class="hk-dot hk-dot--ok" aria-hidden="true"></span>
-			<span class="grow" {id}>Saved</span>
-			<button
-				type="button"
-				class="hk-btn-ghost hk-btn-sm"
-				onclick={async () => {
-					replacing = true;
-					await Promise.resolve();
-					input?.focus();
-				}}>Replace</button
-			>
+			<span class="grow" {id}>
+				{#if env}Saved, overrides <span class="hk-mono">{env}</span>{:else}Saved{/if}
+			</span>
+			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={replace}>Replace</button>
 			{#if clearable}
 				<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (cleared = true)}
 					>Remove</button
@@ -61,7 +73,10 @@
 	{:else if cleared}
 		<input type="hidden" name="{name}.clear" value="1" />
 		<div class="state">
-			<span class="grow">Removed on save</span>
+			<span class="grow">
+				{#if env}Removed on save, falls back to <span class="hk-mono">{env}</span>{:else}Removed on
+					save{/if}
+			</span>
 			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (cleared = false)}
 				>Undo</button
 			>
