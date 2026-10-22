@@ -15,6 +15,13 @@
 	// Discard remounts the sections from the loaded values
 	let version = $state(0);
 	let adding = $state(false);
+	// A note just added: close the add form, or its values would post again with the next save
+	let noteCount: number | null = null;
+	$effect.pre(() => {
+		const n = data.notes.length;
+		if (noteCount !== null && n > noteCount) adding = false;
+		noteCount = n;
+	});
 	let transcriptionErrors = $state<Record<string, string>>({});
 
 	const revealed = $derived(form && 'secret' in form && form.secret ? String(form.secret) : null);

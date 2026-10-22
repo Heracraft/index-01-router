@@ -99,6 +99,16 @@
 		};
 	};
 
+	// Details opens for a failure, and otherwise stays as you left it across live reloads
+	let detOpen = $state(false);
+	let detFor = '';
+	$effect.pre(() => {
+		const k = `${rec.id}:${st.kind === 'failed'}`;
+		if (k === detFor) return;
+		detFor = k;
+		detOpen = st.kind === 'failed';
+	});
+
 	let editing = $state(false);
 	let draft = $state('');
 	const canShare = typeof navigator !== 'undefined' && 'share' in navigator;
@@ -385,7 +395,7 @@
 			</section>
 		{/if}
 
-		<details class="det" open={st.kind === 'failed'}>
+		<details class="det" bind:open={detOpen}>
 			<summary>Details <Icon name="chevron" /></summary>
 			<dl>
 				<dt>Received</dt>

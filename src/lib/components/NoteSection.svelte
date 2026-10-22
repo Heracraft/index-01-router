@@ -164,6 +164,13 @@
 		!!note.lastFailed && (!note.lastSent || note.lastFailed.at > note.lastSent)
 	);
 	const lostKey = $derived(Object.values(note.secretsLost).some(Boolean));
+	// Connection opens itself when something in it needs a look, and otherwise stays as you left
+	// it, so a check's result does not fold away
+	const mustOpen = $derived(isNew || !!errorFor('url') || !!errorFor('apiKey') || lostKey);
+	let connOpen = $state(false);
+	$effect.pre(() => {
+		if (mustOpen) connOpen = true;
+	});
 
 	// Token inserts at the caret
 	const areas: Record<string, HTMLTextAreaElement | HTMLInputElement> = $state({});
@@ -359,7 +366,7 @@
 			</div>
 		</div>
 
-		<details class="sub-det" open={isNew || !!errorFor('url') || !!errorFor('apiKey') || lostKey}>
+		<details class="sub-det" bind:open={connOpen}>
 			<summary>
 				Connection
 				<span class="sum-v">
