@@ -7,7 +7,6 @@ vi.mock('#lib/server/transcribe/index.ts', () => ({
 	PROVIDERS: [
 		{ id: 'openai', label: 'OpenAI', defaultModel: 'gpt-transcribe' },
 		{ id: 'openai-audio', label: 'OpenAI audio', defaultModel: 'gpt-audio' },
-		{ id: 'gemini', label: 'Gemini', defaultModel: 'gemini-default' },
 		{ id: 'whisper-cpp', label: 'whisper.cpp', defaultModel: '' }
 	],
 	CHUNK_SECONDS: 30
@@ -17,17 +16,16 @@ vi.mock('#lib/server/transcribe/probe.ts', () => ({
 }));
 vi.mock('#lib/server/settings.ts', () => {
 	const transcription = () => ({
-		provider: 'gemini',
+		provider: 'openai-audio',
 		openai: { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-old', model: 'old-openai' },
 		openaiAudio: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'old-audio' },
-		gemini: { apiKey: '', model: 'gemini-2.5-flash' },
-		whisperCpp: { url: 'http://whisper:8080' },
+		whisperCpp: { url: '' },
 		languages: ['sw'],
 		prompt: '',
 		chunking: true
 	});
 	return {
-		envLocks: { webhookSecret: false, openaiKey: true, geminiKey: false },
+		envLocks: { webhookSecret: false, openaiKey: true },
 		withEnvKeys: (t: unknown) => t,
 		keyReadiness: () => ({}),
 		getStoredWithStatus: async (key: string) => ({
@@ -47,7 +45,7 @@ const { actions } = await import('./+page.server.ts');
 type Stored = {
 	openai: { model: string; apiKey: string };
 	openaiAudio: { model: string };
-	gemini: { model: string };
+	whisperCpp: { url: string };
 	languages: string[];
 };
 
@@ -59,10 +57,10 @@ function post(fields: [string, string][]) {
 }
 
 const base: [string, string][] = [
-	['provider', 'gemini'],
+	['provider', 'openai-audio'],
 	['openai.baseUrl', 'https://api.openai.com/v1'],
 	['openaiAudio.baseUrl', 'https://api.openai.com/v1'],
-	['whisperCpp.url', 'http://whisper:8080'],
+	['whisperCpp.url', ''],
 	['languages', 'sw']
 ];
 
@@ -70,16 +68,46 @@ beforeEach(() => store.values.clear());
 
 describe('transcription save', () => {
 	it('stores a cleared model blank, so the provider default applies', async () => {
-		await actions.save!(
-			post([...base, ['openai.model', ''], ['openaiAudio.model', ' '], ['gemini.model', '']])
-		);
+		await actions.save!(post([...base, ['openai.model', ''], ['openaiAudio.model', ' ']]));
 		const t = store.values.get('transcription') as Stored;
-		expect([t.openai.model, t.openaiAudio.model, t.gemini.model]).toEqual(['', '', '']);
+		expect([t.openai.model, t.openaiAudio.model]).toEqual(['', '']);
 	});
 
 	it('keeps a typed model', async () => {
-		await actions.save!(post([...base, ['gemini.model', ' gemini-3.8-pro ']]));
-		expect((store.values.get('transcription') as Stored).gemini.model).toBe('gemini-3.8-pro');
+		await actions.save!(post([...base, ['openaiAudio.model', ' gpt-audio-mini ']]));
+		expect((store.values.get('transcription') as Stored).openaiAudio.model).toBe('gpt-audio-mini');
+	});
+
+	it('refuses a provider that no longer exists', async () => {
+		const out = await actions.save!(
+			post([['provider', 'gemini'], ...base.filter(([k]) => k !== 'provider')])
+		);
+		expect(out).toMatchObject({ status: 400, data: { errors: { provider: expect.any(String) } } });
+	});
+
+	it('leaves the whisper.cpp URL blank until whisper.cpp is the provider', async () => {
+		await actions.save!(post(base));
+		expect((store.values.get('transcription') as Stored).whisperCpp.url).toBe('');
+		store.values.clear();
+		const whisper = base.map(([k, v]): [string, string] => [
+			k,
+			k === 'provider' ? 'whisper-cpp' : v
+		]);
+		const out = await actions.save!(post(whisper));
+		expect(out).toMatchObject({
+			status: 400,
+			data: { errors: { 'whisperCpp.url': 'Required.' } }
+		});
+		expect(store.values.has('transcription')).toBe(false);
+		await actions.save!(
+			post([
+				...whisper.filter(([k]) => k !== 'whisperCpp.url'),
+				['whisperCpp.url', 'http://10.0.0.5:8080/']
+			])
+		);
+		expect((store.values.get('transcription') as Stored).whisperCpp.url).toBe(
+			'http://10.0.0.5:8080'
+		);
 	});
 
 	it('saves a language typed into the box without Add', async () => {

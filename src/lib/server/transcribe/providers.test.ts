@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { isHallucination } from './clean.ts';
-import { gemini, GEMINI_DEFAULT_MODEL, geminiBody, parseGeminiReply } from './gemini.ts';
 import {
 	errorDetail,
 	httpError,
@@ -20,7 +19,6 @@ function settings(over: Partial<TranscriptionSettings> = {}): TranscriptionSetti
 		provider: 'openai',
 		openai: { baseUrl: 'https://api.openai.com/v1/', apiKey: 'sk-test', model: 'gpt-transcribe' },
 		openaiAudio: { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-audio' },
-		gemini: { apiKey: 'g-test', model: 'gemini-3.8-flash' },
 		whisperCpp: { url: 'http://whisper:8080' },
 		languages: [],
 		prompt: '',
@@ -358,139 +356,39 @@ describe('openai-audio', () => {
 	});
 });
 
-describe('gemini', () => {
-	it('builds generateContent with inline audio and a response schema', async () => {
-		const { f, calls } = fakeFetch([
-			json({
-				candidates: [
-					{
-						content: { parts: [{ text: '{"text":"Sawa sawa","languages":["sw"]}' }] },
-						finishReason: 'STOP'
-					}
-				]
-			})
-		]);
-		const ogg = { bytes: new Uint8Array([1, 2, 3]), mime: 'audio/ogg', name: 'audio.ogg' };
-		const r = await gemini.transcribe(ogg, settings({ prompt: 'Juma' }), ctx(f));
-		expect(r).toEqual({ text: 'Sawa sawa', languages: ['sw'] });
-		const c = calls[0]!;
-		expect(c.url).toBe(
-			'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent'
+describe('httpError', () => {
+	const host = 'api.openai.com';
+
+	it('names a rejected key and a used up quota, and retries the rest', () => {
+		expect(httpError(401, '{"error":{"message":"Incorrect API key"}}', host).message).toBe(
+			`Key rejected by ${host} (401)`
 		);
-		expect((c.init.headers as Record<string, string>)['x-goog-api-key']).toBe('g-test');
-		const body = JSON.parse(c.init.body as string);
-		expect(body).toEqual(geminiBody(ogg, settings({ prompt: 'Juma' }), 'gemini-3.8-flash'));
-		expect(body.contents[0].parts[1]).toEqual({
-			inline_data: { mime_type: 'audio/ogg', data: 'AQID' }
+		const quota = JSON.stringify({
+			error: { message: 'You exceeded your current quota', code: 'insufficient_quota' }
 		});
-		expect(body.generationConfig.responseMimeType).toBe('application/json');
-		expect(body.generationConfig.responseSchema.required).toEqual(['text', 'languages']);
-		expect(body.system_instruction.parts[0].text).toContain('Juma');
-	});
-
-	it('maps Gemini errors', async () => {
-		const bad = fakeFetch([
-			json(
-				{
-					error: {
-						code: 400,
-						message: 'API key not valid. Please pass a valid API key.',
-						status: 'INVALID_ARGUMENT',
-						details: [{ reason: 'API_KEY_INVALID' }]
-					}
-				},
-				400
-			)
-		]);
-		await expect(gemini.transcribe(audio, settings(), ctx(bad.f))).rejects.toThrow(
-			'Key rejected by generativelanguage.googleapis.com (400)'
-		);
-		expect(() => parseGeminiReply('{"promptFeedback":{"blockReason":"SAFETY"}}')).toThrow(
-			'Gemini blocked the request (SAFETY)'
-		);
-	});
-
-	it('defaults to gemini-3.8-flash', () => {
-		expect(GEMINI_DEFAULT_MODEL).toBe('gemini-3.8-flash');
-		expect(gemini.model(settings({ gemini: { apiKey: 'k', model: ' ' } }))).toBe(
-			'gemini-3.8-flash'
-		);
-		expect(
-			gemini.model(settings({ gemini: { apiKey: 'k', model: 'models/gemini-3.5-flash-lite' } }))
-		).toBe('gemini-3.5-flash-lite');
-	});
-
-	it('names the model when generateContent refuses it', async () => {
-		const { f } = fakeFetch([
-			json(
-				{
-					error: {
-						code: 403,
-						message: 'Your project does not have access to model gemini-2.5-flash.',
-						status: 'PERMISSION_DENIED'
-					}
-				},
-				403
-			)
-		]);
-		const s = settings({ gemini: { apiKey: 'k', model: 'gemini-2.5-flash' } });
-		const err = (await gemini.transcribe(audio, s, ctx(f)).catch((e) => e)) as TranscribeError;
-		expect(err.message).toBe(
-			'gemini-2.5-flash not available to this key (403): Your project does not have access to model gemini-2.5-flash.'
-		);
-		expect(err.retryable).toBe(false);
-	});
-
-	it('tells a model refusal from a key refusal', () => {
-		const host = 'generativelanguage.googleapis.com';
-		const zero = JSON.stringify({
-			error: {
-				code: 429,
-				status: 'RESOURCE_EXHAUSTED',
-				message:
-					'Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: gemini-2.5-pro'
-			}
+		expect(httpError(429, quota, host)).toMatchObject({
+			message: `Quota used up at ${host} (429): You exceeded your current quota`,
+			retryable: false
 		});
-		expect(httpError(429, zero, host, 'gemini-2.5-pro').message).toMatch(
-			/^gemini-2\.5-pro not available to this key \(429\)/
-		);
-		const busy = JSON.stringify({
-			error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Resource has been exhausted' }
+		expect(httpError(429, '{"error":{"message":"Rate limit reached"}}', host).retryable).toBe(true);
+		expect(httpError(503, '', host)).toMatchObject({
+			message: `${host} answered 503`,
+			retryable: true
 		});
-		expect(httpError(429, busy, host, 'gemini-3.8-flash').retryable).toBe(true);
-		const blocked = JSON.stringify({
-			error: {
-				code: 403,
-				status: 'PERMISSION_DENIED',
-				message: 'API key expired.',
-				details: [{ reason: 'API_KEY_INVALID' }]
-			}
-		});
-		expect(httpError(403, blocked, host, 'gemini-3.8-flash').message).toBe(
-			`Key rejected by ${host} (403)`
-		);
-		// Without a model the old wording stays
-		expect(httpError(403, '{"error":{"status":"PERMISSION_DENIED"}}', host).message).toBe(
-			`Key rejected by ${host} (403)`
-		);
-	});
-
-	it('picks temperature and thinking by model generation', () => {
-		const ogg = { bytes: new Uint8Array([1]), mime: 'audio/ogg', name: 'audio.ogg' };
-		const g3 = geminiBody(ogg, settings(), 'gemini-3-flash').generationConfig;
-		expect(g3).not.toHaveProperty('temperature');
-		expect(g3).toMatchObject({ thinkingConfig: { thinkingLevel: 'low' } });
-		const g25 = geminiBody(ogg, settings(), 'gemini-2.5-flash').generationConfig;
-		expect(g25).toMatchObject({ temperature: 0, thinkingConfig: { thinkingBudget: 0 } });
-		const pro = geminiBody(ogg, settings(), 'gemini-2.5-pro').generationConfig;
-		expect(pro).toMatchObject({ thinkingConfig: { thinkingBudget: 128 } });
-		const other = geminiBody(ogg, settings(), 'gemini-2.0-flash').generationConfig;
-		expect(other).not.toHaveProperty('thinkingConfig');
-		expect(other).toMatchObject({ temperature: 0 });
 	});
 });
 
 describe('whisper-cpp', () => {
+	it('asks for a server URL before sending anything', async () => {
+		const { f, calls } = fakeFetch([json({ text: 'x' })]);
+		const wav = { bytes: new Uint8Array([1]), mime: 'audio/wav', name: 'audio.wav' };
+		const err = await whisperCpp
+			.transcribe(wav, settings({ whisperCpp: { url: ' ' } }), ctx(f))
+			.catch((e) => e);
+		expect(err).toMatchObject({ message: 'No whisper.cpp server URL set', retryable: false });
+		expect(calls).toEqual([]);
+	});
+
 	it('posts multipart to /inference with language auto', async () => {
 		const { f, calls } = fakeFetch([json({ text: ' Habari [BLANK_AUDIO] yako', language: 'sw' })]);
 		const wav = { bytes: new Uint8Array([1]), mime: 'audio/wav', name: 'audio.wav' };

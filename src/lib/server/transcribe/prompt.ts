@@ -1,5 +1,5 @@
-// Instructions and reply parsing for the providers that pipe audio into an LLM (openai-audio,
-// gemini), plus language code normalisation shared by every provider.
+// Instructions and reply parsing for the provider that pipes audio into an LLM (openai-audio),
+// plus language code normalisation shared by every provider.
 import type { TranscriptionSettings } from './types.ts';
 
 let byName: Map<string, string> | null = null;
@@ -110,19 +110,6 @@ export function llmInstructions(settings: Pick<TranscriptionSettings, 'languages
 }
 
 export const llmUserText = 'Transcribe this recording verbatim. Reply with the JSON object only.';
-
-/**
- * JSON schema for Gemini's responseSchema (OpenAPI subset). The REST examples spell types in
- * upper case ('OBJECT'); the API accepts these lower case names too.
- */
-export const transcriptSchema = {
-	type: 'object',
-	properties: {
-		text: { type: 'string' },
-		languages: { type: 'array', items: { type: 'string' } }
-	},
-	required: ['text', 'languages']
-};
 
 /**
  * `{text, languages}` from an LLM reply: plain JSON, JSON in a code fence, JSON with text around

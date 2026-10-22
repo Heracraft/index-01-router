@@ -93,7 +93,24 @@ export const variables = defineEnvVars({
 		schema: optional
 	},
 	OPENAI_API_KEY: { description: 'Default key for OpenAI providers', schema: optional },
-	GEMINI_API_KEY: { description: 'Default key for the Gemini provider', schema: optional },
+	OBSIDIAN_MCP_URL: {
+		description: 'MCP endpoint of the Obsidian REST server, e.g. https://vault.example.com/mcp/',
+		schema: (value) => {
+			if (!value) return undefined;
+			let url: URL | undefined;
+			try {
+				url = new URL(value);
+			} catch {
+				// reported below
+			}
+			if (url?.protocol === 'http:' || url?.protocol === 'https:' || building) return value;
+			throw new Error(`OBSIDIAN_MCP_URL: ${value} is not an http(s) URL`);
+		}
+	},
+	OBSIDIAN_API_KEY: {
+		description: 'Bearer key of the Obsidian REST server at OBSIDIAN_MCP_URL',
+		schema: optional
+	},
 	FFMPEG_PATH: { description: 'ffmpeg binary', schema: (value) => value || 'ffmpeg' },
 	FFPROBE_PATH: { description: 'ffprobe binary', schema: (value) => value || 'ffprobe' },
 	TZ: {

@@ -31,7 +31,7 @@ export class TranscribeError extends Error {
 }
 
 /** Container a provider wants each request's audio in. All are 16 kHz mono */
-export type UploadFormat = 'webm' | 'ogg' | 'wav' | 'mp3';
+export type UploadFormat = 'webm' | 'wav' | 'mp3';
 
 export interface Upload {
 	bytes: Uint8Array;

@@ -21,6 +21,7 @@ vi.mock('#lib/server/integrations/index.ts', () => {
 		IntegrationInputError: class extends Error {},
 		DeliverError: class extends Error {},
 		deliveryCount: async () => 0,
+		envFor: () => ({ envSet: {}, envValues: {} }),
 		getIntegrationForUI: async () => null,
 		deleteIntegration: async () => ({ deleted: false, recordingIds: [] }),
 		saveIntegration: async (input: { kind: string }) => {

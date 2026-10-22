@@ -2,6 +2,7 @@ import { asc, count, eq } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { deliveries, integrations, type Integration } from '../db/schema.ts';
 import { decrypt, encrypt, isEncrypted } from '../crypto.ts';
+import { fieldEnv } from './env.ts';
 import { obsidian } from './obsidian.ts';
 import { triggerLabel } from '../../format.ts';
 import {
@@ -24,17 +25,56 @@ export type Trigger = (typeof TRIGGERS)[number];
 
 export const isKind = (kind: string): kind is Kind => Object.hasOwn(kinds, kind);
 
+/** What the environment supplies for a kind's fields, as the browser may see it */
+export interface EnvView {
+	/** Field key -> name of the env variable that is set for it */
+	envSet: Record<string, string>;
+	/** Field key -> env value, for fields that are not secret (the URL) */
+	envValues: Record<string, string>;
+}
+
 /** An integration as the browser may see it: secrets blanked, `secretsSet` says which are stored */
-export type IntegrationView = Omit<Integration, 'config'> & {
-	config: Record<string, unknown>;
-	secretsSet: Record<string, boolean>;
-	/** Stored secrets no key in AUTH_SECRET or AUTH_SECRET_PREVIOUS opens */
-	secretsLost: Record<string, boolean>;
-};
+export type IntegrationView = Omit<Integration, 'config'> &
+	EnvView & {
+		config: Record<string, unknown>;
+		secretsSet: Record<string, boolean>;
+		/** Stored secrets no key in AUTH_SECRET or AUTH_SECRET_PREVIOUS opens */
+		secretsLost: Record<string, boolean>;
+	};
 
 function kindOf(kind: string): IntegrationKind {
 	if (!isKind(kind)) throw new IntegrationInputError(`Unknown integration kind: ${kind}`);
 	return kinds[kind];
+}
+
+/** Env fallbacks of a kind's fields. Never send `envSet` values of secret fields to the browser */
+export function envFor(kind: IntegrationKind): EnvView {
+	const envSet: Record<string, string> = {};
+	const envValues: Record<string, string> = {};
+	for (const f of kind.fields) {
+		const value = f.env ? fieldEnv(f.env) : undefined;
+		if (!f.env || !value) continue;
+		envSet[f.key] = f.env;
+		if (f.type !== 'secret' && !kind.secrets.includes(f.key)) envValues[f.key] = value;
+	}
+	return { envSet, envValues };
+}
+
+/** Blank fields that have an env variable take its value. A stored value overrides the env */
+export function withEnv(kind: IntegrationKind, config: Record<string, unknown>) {
+	const out = { ...config };
+	for (const f of kind.fields) {
+		const value = f.env ? fieldEnv(f.env) : undefined;
+		if (value && (out[f.key] === '' || out[f.key] == null)) out[f.key] = value;
+	}
+	return out;
+}
+
+/** A row ready for use: secrets decrypted, env fallbacks applied. Server side only */
+function resolved(row: Integration): Integration {
+	const kind = kinds[row.kind as Kind];
+	const decrypted = decryptConfig(row);
+	return kind ? { ...decrypted, config: withEnv(kind, decrypted.config) } : decrypted;
 }
 
 function decryptConfig(row: Integration): Integration {
@@ -79,7 +119,8 @@ function toView(row: Integration): IntegrationView {
 		secretsLost[key] = typeof v === 'string' && isEncrypted(v) && !secretsSet[key];
 		config[key] = '';
 	}
-	return { ...row, config, secretsSet, secretsLost };
+	const env = kind ? envFor(kind) : { envSet: {}, envValues: {} };
+	return { ...row, config, secretsSet, secretsLost, ...env };
 }
 
 /** Integrations holding a secret that no key in AUTH_SECRET or AUTH_SECRET_PREVIOUS opens */
@@ -125,10 +166,10 @@ function normalizeTriggers(triggers: unknown): Trigger[] {
 	return [...new Set(list)] as Trigger[];
 }
 
-/** All rows, oldest first, secrets decrypted. Server side only */
+/** All rows, oldest first, secrets decrypted, env fallbacks applied. Server side only */
 export async function listIntegrations(): Promise<Integration[]> {
 	const rows = await db.select().from(integrations).orderBy(asc(integrations.createdAt));
-	return rows.map(decryptConfig);
+	return rows.map(resolved);
 }
 
 /** All rows with secrets blanked, safe to send to the browser */
@@ -137,10 +178,16 @@ export async function listIntegrationsForUI(): Promise<IntegrationView[]> {
 	return rows.map(toView);
 }
 
-/** One row, secrets decrypted. Server side only */
-export async function getIntegration(id: string): Promise<Integration | null> {
+/** One row as stored, secrets decrypted, no env fallbacks: the base a save or test builds on */
+async function getStoredIntegration(id: string): Promise<Integration | null> {
 	const [row] = await db.select().from(integrations).where(eq(integrations.id, id));
 	return row ? decryptConfig(row) : null;
+}
+
+/** One row, secrets decrypted, env fallbacks applied. Server side only */
+export async function getIntegration(id: string): Promise<Integration | null> {
+	const [row] = await db.select().from(integrations).where(eq(integrations.id, id));
+	return row ? resolved(row) : null;
 }
 
 export async function getIntegrationForUI(id: string): Promise<IntegrationView | null> {
@@ -155,16 +202,23 @@ export interface SaveIntegrationInput {
 	enabled: boolean;
 	triggers: string[];
 	config: Record<string, unknown>;
+	/** Secret keys to drop from the stored row, so the field falls back to its env variable */
+	clearSecrets?: string[];
 }
 
-/** Fills blank secrets from the stored row, so the UI can submit without re-entering keys */
+/**
+ * Fills blank secrets from the stored row, so the UI can submit without re-entering keys.
+ * Secrets in `clear` stay blank instead
+ */
 function withStoredSecrets(
 	kind: IntegrationKind,
 	config: Record<string, unknown>,
-	stored: Integration | null
+	stored: Integration | null,
+	clear: string[] = []
 ) {
 	const out = { ...config };
 	for (const key of kind.secrets) {
+		if (clear.includes(key) && out[key] === '') continue;
 		if (out[key] === '' && stored && typeof stored.config[key] === 'string') {
 			out[key] = stored.config[key];
 		}
@@ -172,7 +226,10 @@ function withStoredSecrets(
 	return out;
 }
 
-/** Required fields first, then the kind's own rules. Throws for the first field at fault */
+/**
+ * Required fields first, then the kind's own rules. Throws for the first field at fault.
+ * Takes the config with env fallbacks applied, so a field the env supplies counts as set
+ */
 function checkConfig(kind: IntegrationKind, config: Record<string, unknown>) {
 	const missing = kind.fields.find(
 		(f) => f.required && (config[f.key] === '' || config[f.key] == null)
@@ -181,13 +238,16 @@ function checkConfig(kind: IntegrationKind, config: Record<string, unknown>) {
 	kind.validate?.(config);
 }
 
-/** Inserts or updates. A blank secret keeps the stored one. Returns the row, secrets decrypted */
+/**
+ * Inserts or updates. A blank secret keeps the stored one. Blank fields with an env variable are
+ * stored blank and read the env at use. Returns the row as `getIntegration` does
+ */
 export async function saveIntegration(input: SaveIntegrationInput): Promise<Integration> {
 	const kind = kindOf(input.kind);
 	const name = input.name?.trim();
 	if (!name) throw new IntegrationInputError('Required.', { field: 'name' });
 	const triggers = normalizeTriggers(input.triggers);
-	const existing = input.id ? await getIntegration(input.id) : null;
+	const existing = input.id ? await getStoredIntegration(input.id) : null;
 	if (input.id && !existing) throw new IntegrationInputError('Integration not found');
 	if (existing && existing.kind !== kind.kind) {
 		throw new IntegrationInputError('The kind of an integration cannot change');
@@ -196,9 +256,10 @@ export async function saveIntegration(input: SaveIntegrationInput): Promise<Inte
 	const config = withStoredSecrets(
 		kind,
 		normalizeConfig(kind.fields, input.config ?? {}),
-		existing
+		existing,
+		input.clearSecrets
 	);
-	checkConfig(kind, config);
+	checkConfig(kind, withEnv(kind, config));
 	const stored = { ...config };
 	for (const key of kind.secrets) {
 		if (typeof stored[key] === 'string' && stored[key])
@@ -213,7 +274,7 @@ export async function saveIntegration(input: SaveIntegrationInput): Promise<Inte
 				.where(eq(integrations.id, existing.id))
 				.returning()
 		: await db.insert(integrations).values(values).returning();
-	return decryptConfig(row!);
+	return resolved(row!);
 }
 
 /**
@@ -237,18 +298,23 @@ export async function deleteIntegration(
 }
 
 /**
- * Checks a config without saving it. With `id`, blank secrets come from that stored row.
+ * Checks a config without saving it. With `id`, blank secrets come from that stored row; blank
+ * fields left after that take their env variable. Secrets in `clearSecrets` skip the stored row.
  * Resolves to what the kind found, rejects with DeliverError (or IntegrationInputError).
  */
 export async function testIntegration(
 	kindName: string,
 	config: Record<string, unknown>,
 	id: string | undefined,
-	timeZone: string
+	timeZone: string,
+	clearSecrets: string[] = []
 ): Promise<TestResult> {
 	const kind = kindOf(kindName);
-	const stored = id ? await getIntegration(id) : null;
-	const full = withStoredSecrets(kind, normalizeConfig(kind.fields, config ?? {}), stored);
+	const stored = id ? await getStoredIntegration(id) : null;
+	const full = withEnv(
+		kind,
+		withStoredSecrets(kind, normalizeConfig(kind.fields, config ?? {}), stored, clearSecrets)
+	);
 	checkConfig(kind, full);
 	return kind.test(full, { timeZone });
 }
@@ -275,4 +341,36 @@ export function integrationMatches(
 ) {
 	if (!integration.enabled) return false;
 	return integration.triggers.length === 0 || integration.triggers.includes(trigger);
+}
+
+/** Name of the integration created from OBSIDIAN_MCP_URL */
+export const ENV_INTEGRATION_NAME = 'Daily note';
+
+/**
+ * With OBSIDIAN_MCP_URL set and no Obsidian integration yet, creates one: enabled, every trigger,
+ * default config, URL and key blank so they read the env. Runs at start and does nothing while
+ * any Obsidian integration exists. Deleting the last one brings it back on the next start, so
+ * turn it off instead. Returns the id it created, or null
+ */
+export async function ensureEnvIntegrations(): Promise<string | null> {
+	if (!fieldEnv('OBSIDIAN_MCP_URL')) return null;
+	const [existing] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(eq(integrations.kind, obsidian.kind))
+		.limit(1);
+	if (existing) return null;
+	const config = normalizeConfig(obsidian.fields, {});
+	const [row] = await db
+		.insert(integrations)
+		.values({
+			kind: obsidian.kind,
+			name: ENV_INTEGRATION_NAME,
+			enabled: true,
+			triggers: [],
+			config
+		})
+		.returning({ id: integrations.id });
+	console.log(`Created the ${ENV_INTEGRATION_NAME} integration from OBSIDIAN_MCP_URL`);
+	return row?.id ?? null;
 }

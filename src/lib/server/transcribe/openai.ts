@@ -53,7 +53,7 @@ export function retryAfterMs(headers: Headers, now = Date.now()): number | null 
 	return Number.isFinite(d) ? Math.max(0, d - now) : null;
 }
 
-/** The message in an error body: OpenAI and Gemini `{error: {message}}`, whisper.cpp `{error}` */
+/** The message in an error body: OpenAI `{error: {message}}`, whisper.cpp `{error}` */
 export function errorDetail(body: string): string {
 	let msg = body;
 	try {
@@ -76,44 +76,14 @@ export function errorDetail(body: string): string {
 	return msg.length > 200 ? msg.slice(0, 197) + '...' : msg;
 }
 
-/**
- * A 403 or 429 that refuses the model rather than the key: Gemini answers PERMISSION_DENIED for
- * a model the key may not use (the 2.5 models for new keys), and RESOURCE_EXHAUSTED with a
- * quota limit of 0 for a model the key's tier does not include
- */
-function refusesModel(status: number, body: string) {
-	if (status === 403)
-		return (
-			/PERMISSION_DENIED|model|not (?:allowed|available)|does not have access/i.test(body) &&
-			!/API_KEY_|API key|unregistered callers/i.test(body)
-		);
-	return status === 429 && /RESOURCE_EXHAUSTED/.test(body) && /\blimit:\s*0\b/i.test(body);
-}
-
-/**
- * Error for a non-2xx answer. Retryable: 408, 409, 429 (except quota), 5xx. With `model` given, a
- * refusal of that model is named as such instead of as a rejected key.
- */
-export function httpError(
-	status: number,
-	body: string,
-	host: string,
-	model?: string
-): TranscribeError {
+/** Error for a non-2xx answer. Retryable: 408, 409, 429 (except quota), 5xx */
+export function httpError(status: number, body: string, host: string): TranscribeError {
 	const detail = errorDetail(body);
 	const tail = detail ? `: ${detail}` : '';
-	if (model && refusesModel(status, body))
-		return new TranscribeError(`${model} not available to this key (${status})${tail}`, false);
 	if (status === 401 || status === 403)
 		return new TranscribeError(`Key rejected by ${host} (${status})`, false);
-	if (
-		status === 429 &&
-		/insufficient_quota|billing|quota exceeded|RESOURCE_EXHAUSTED.*quota/i.test(body)
-	)
+	if (status === 429 && /insufficient_quota|billing|quota exceeded/i.test(body))
 		return new TranscribeError(`Quota used up at ${host} (429)${tail}`, false);
-	// Gemini answers a bad key with 400 API_KEY_INVALID
-	if (status === 400 && /API_KEY_INVALID|API key not valid/i.test(body))
-		return new TranscribeError(`Key rejected by ${host} (400)`, false);
 	const retryable = status === 408 || status === 409 || status === 429 || status >= 500;
 	return new TranscribeError(`${host} answered ${status}${tail}`, retryable);
 }
@@ -124,8 +94,6 @@ export interface SendOptions {
 	/** Built per attempt */
 	body?: () => BodyInit;
 	attempts?: number;
-	/** Model the request asks for, named in errors that refuse it */
-	model?: string;
 }
 
 /**
@@ -182,7 +150,7 @@ export async function send(
 		}
 		if (r) {
 			if (r.ok) return body;
-			last = httpError(r.status, body, host, opts.model);
+			last = httpError(r.status, body, host);
 			if (!last.retryable) throw last;
 			after = retryAfterMs(r.headers);
 			// A server asking for minutes is better left to the pipeline's own retry

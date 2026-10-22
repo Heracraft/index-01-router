@@ -34,9 +34,10 @@
 				.map((f) => [f.key, str(f.key)])
 		);
 	});
+	// A blank URL uses OBSIDIAN_MCP_URL when that is set
 	const showTls = $derived(
 		!data.kind.fields.some((f) => f.key === 'insecureTls') ||
-			(values.url ?? '').trim().toLowerCase().startsWith('https://')
+			((values.url ?? '').trim() || it.envValues.url || '').toLowerCase().startsWith('https://')
 	);
 
 	let busy = $state<'save' | 'test' | null>(null);
@@ -237,6 +238,8 @@
 					label={f.label}
 					set={!!it.secretsSet[f.key]}
 					lost={!!it.secretsLost[f.key]}
+					env={it.envSet[f.key] ?? null}
+					clearable={!!it.envSet[f.key]}
 					invalid={!!err}
 					describedby={err ? errId(f.key) : undefined}
 					placeholder={f.placeholder}
@@ -294,7 +297,7 @@
 						class:hk-mono={f.type === 'url' || f.key.toLowerCase().includes('path')}
 						type={f.type === 'url' ? 'url' : 'text'}
 						spellcheck="false"
-						placeholder={f.placeholder}
+						placeholder={it.envValues[f.key] ?? f.placeholder}
 						bind:value={values[f.key]}
 						aria-invalid={!!err || pathBad || undefined}
 						aria-describedby={err ? errId(f.key) : pathBad ? 'notepath-preview' : undefined}

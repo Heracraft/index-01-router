@@ -13,7 +13,9 @@ const enqueued: string[] = [];
 vi.mock('$app/env/private', () => ({
 	DATABASE_URL: process.env.INGEST_TEST_DATABASE_URL ?? 'postgres://invalid',
 	DATA_DIR: root,
-	FFPROBE_PATH: 'ffprobe'
+	FFPROBE_PATH: 'ffprobe',
+	OBSIDIAN_MCP_URL: undefined,
+	OBSIDIAN_API_KEY: undefined
 }));
 vi.mock('./pipeline.ts', () => ({ enqueue: (id: string) => enqueued.push(id) }));
 

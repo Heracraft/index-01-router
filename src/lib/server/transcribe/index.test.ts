@@ -8,8 +8,7 @@ function settings(over: Partial<TranscriptionSettings> = {}): TranscriptionSetti
 		provider: 'openai',
 		openai: { baseUrl: 'https://api.openai.com/v1/', apiKey: 'sk-test', model: 'gpt-transcribe' },
 		openaiAudio: { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-audio' },
-		gemini: { apiKey: 'g-test', model: 'gemini-3.8-flash' },
-		whisperCpp: { url: 'http://whisper:8080' },
+		whisperCpp: { url: 'http://127.0.0.1:8080' },
 		languages: [],
 		prompt: '',
 		chunking: true,
@@ -265,7 +264,7 @@ describe('transcribe', () => {
 
 describe('PROVIDERS', () => {
 	it('lists the four providers', () => {
-		expect(PROVIDERS.map((p) => p.id)).toEqual(['openai', 'openai-audio', 'gemini', 'whisper-cpp']);
+		expect(PROVIDERS.map((p) => p.id)).toEqual(['openai', 'openai-audio', 'whisper-cpp']);
 		expect(PROVIDERS[0]!.defaultModel).toBe('gpt-transcribe');
 	});
 });

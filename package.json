@@ -20,8 +20,8 @@
 		"db:studio": "drizzle-kit studio",
 		"db:up": "docker compose -f compose.dev.yaml up -d",
 		"db:down": "docker compose -f compose.dev.yaml down",
-		"obsidian:up": "mkdir -p data/vault && docker compose -f compose.dev.yaml --profile obsidian up -d obsidian-rest",
-		"whisper:up": "docker compose -f compose.dev.yaml --profile whisper up -d whisper",
+		"obsidian:up": "scripts/obsidian-dev.sh",
+		"obsidian:down": "scripts/obsidian-dev.sh stop",
 		"docker:build": "docker build -t index-01-router ."
 	},
 	"devDependencies": {

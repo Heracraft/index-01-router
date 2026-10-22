@@ -3,15 +3,10 @@ import { randomBytes } from 'node:crypto';
 import { db } from './db/index.ts';
 import { integrations, settings } from './db/schema.ts';
 import { decryptWithStatus, encrypt, isEncrypted } from './crypto.ts';
-import {
-	AUTH_SECRET_PREVIOUS,
-	INDEX01_WEBHOOK_SECRET,
-	OPENAI_API_KEY,
-	GEMINI_API_KEY,
-	TZ
-} from '$app/env/private';
+import { AUTH_SECRET_PREVIOUS, INDEX01_WEBHOOK_SECRET, OPENAI_API_KEY, TZ } from '$app/env/private';
 
-export type TranscribeProvider = 'openai' | 'openai-audio' | 'gemini' | 'whisper-cpp';
+export const TRANSCRIBE_PROVIDERS = ['openai', 'openai-audio', 'whisper-cpp'] as const;
+export type TranscribeProvider = (typeof TRANSCRIBE_PROVIDERS)[number];
 
 export interface TranscriptionSettings {
 	provider: TranscribeProvider;
@@ -19,8 +14,7 @@ export interface TranscriptionSettings {
 	openai: { baseUrl: string; apiKey: string; model: string };
 	/** openai-audio: chat completions with input_audio, the audio is piped into an LLM */
 	openaiAudio: { baseUrl: string; apiKey: string; model: string };
-	gemini: { apiKey: string; model: string };
-	/** whisper.cpp server, POST {url}/inference */
+	/** whisper.cpp server hosted separately, POST {url}/inference. Blank until set */
 	whisperCpp: { url: string };
 	/** ISO 639-1 hints for code switched audio, e.g. ['sw', 'en']. Empty means detect */
 	languages: string[];
@@ -66,8 +60,7 @@ const defaults: { [K in keyof Shapes]: () => Shapes[K] } = {
 		// Blank models follow each provider's defaultModel, so a new default reaches old installs
 		openai: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: '' },
 		openaiAudio: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: '' },
-		gemini: { apiKey: '', model: '' },
-		whisperCpp: { url: 'http://whisper:8080' },
+		whisperCpp: { url: '' },
 		languages: [],
 		prompt: '',
 		chunking: true
@@ -81,7 +74,7 @@ export const newWebhookSecret = () => randomBytes(32).toString('base64url');
 
 /** Paths of string fields stored encrypted */
 const secretPaths: { [K in keyof Shapes]: string[] } = {
-	transcription: ['openai.apiKey', 'openaiAudio.apiKey', 'gemini.apiKey'],
+	transcription: ['openai.apiKey', 'openaiAudio.apiKey'],
 	general: [],
 	webhook: ['secret'],
 	session: []
@@ -91,7 +84,6 @@ const secretPaths: { [K in keyof Shapes]: string[] } = {
 export const SECRET_LABELS: Record<string, string> = {
 	'openai.apiKey': 'OpenAI key',
 	'openaiAudio.apiKey': 'OpenAI audio key',
-	'gemini.apiKey': 'Gemini key',
 	secret: 'webhook signing secret'
 };
 
@@ -181,7 +173,25 @@ export async function getStoredWithStatus<K extends keyof Shapes>(
 		warned.add(message);
 		if (key === 'webhook') raw = await resetWebhookSecret(raw);
 	}
-	return { value: merge(defaults[key](), raw) as Shapes[K], lost };
+	const value = merge(defaults[key](), raw) as Shapes[K];
+	if (key === 'transcription')
+		return { value: cleanTranscription(value as TranscriptionSettings) as Shapes[K], lost };
+	return { value, lost };
+}
+
+/**
+ * Rows from older versions can name a provider that is gone (gemini) and carry its fields. The
+ * provider falls back to the default and unknown top-level fields are dropped
+ */
+function cleanTranscription(t: TranscriptionSettings): TranscriptionSettings {
+	const base = defaults.transcription();
+	const out = Object.fromEntries(
+		Object.entries(t).filter(([k]) => Object.hasOwn(base, k))
+	) as unknown as TranscriptionSettings;
+	if (!(TRANSCRIBE_PROVIDERS as readonly string[]).includes(out.provider)) {
+		out.provider = base.provider;
+	}
+	return out;
 }
 
 export async function getStored<K extends keyof Shapes>(key: K): Promise<Shapes[K]> {
@@ -251,8 +261,7 @@ export async function reencryptStored() {
  */
 export const envLocks = {
 	webhookSecret: !!INDEX01_WEBHOOK_SECRET,
-	openaiKey: !!OPENAI_API_KEY,
-	geminiKey: !!GEMINI_API_KEY
+	openaiKey: !!OPENAI_API_KEY
 };
 
 const isOpenAI = (url: string) => {
@@ -263,7 +272,7 @@ const isOpenAI = (url: string) => {
 	}
 };
 
-/** Blank keys fall back to OPENAI_API_KEY (for openai.com base URLs) and GEMINI_API_KEY */
+/** Blank keys fall back to OPENAI_API_KEY, for openai.com base URLs */
 export function withEnvKeys(t: TranscriptionSettings): TranscriptionSettings {
 	const s = structuredClone(t);
 	if (!s.openai.apiKey && OPENAI_API_KEY && isOpenAI(s.openai.baseUrl)) {
@@ -272,7 +281,6 @@ export function withEnvKeys(t: TranscriptionSettings): TranscriptionSettings {
 	if (!s.openaiAudio.apiKey && OPENAI_API_KEY && isOpenAI(s.openaiAudio.baseUrl)) {
 		s.openaiAudio.apiKey = OPENAI_API_KEY;
 	}
-	if (!s.gemini.apiKey && GEMINI_API_KEY) s.gemini.apiKey = GEMINI_API_KEY;
 	return s;
 }
 
@@ -292,7 +300,6 @@ export type KeyReadiness = 'ok' | 'lost' | 'missing' | null;
 export const PROVIDER_KEYS: Record<TranscribeProvider, { path: string; field: string } | null> = {
 	openai: { path: 'openai.apiKey', field: 'openai-key' },
 	'openai-audio': { path: 'openaiAudio.apiKey', field: 'audio-key' },
-	gemini: { path: 'gemini.apiKey', field: 'gemini-key' },
 	'whisper-cpp': null
 };
 
@@ -315,7 +322,6 @@ export function keyReadiness(
 			'openaiAudio.apiKey',
 			isOpenAI(t.openaiAudio.baseUrl)
 		),
-		gemini: one(effective.gemini.apiKey, 'gemini.apiKey', true),
 		'whisper-cpp': null
 	};
 }

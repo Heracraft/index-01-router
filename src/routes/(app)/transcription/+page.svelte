@@ -106,13 +106,8 @@
 	const defaultModel = (id: string) => data.providers.find((p) => p.id === id)?.defaultModel ?? '';
 	// The effective model: a blank field means the provider's default
 	const modelOf = (id: string) =>
-		(id === 'openai'
-			? s.openai.model
-			: id === 'openai-audio'
-				? s.openaiAudio.model
-				: id === 'gemini'
-					? s.gemini.model
-					: '') || defaultModel(id);
+		(id === 'openai' ? s.openai.model : id === 'openai-audio' ? s.openaiAudio.model : '') ||
+		defaultModel(id);
 	const READY_LABEL = { ok: 'Key set', lost: 'Key unreadable', missing: 'No key' } as const;
 	const READY_TONE = { ok: 'ok', lost: 'err', missing: 'idle' } as const;
 
@@ -273,41 +268,6 @@
 		</div>
 	</div>
 
-	<div class="group" hidden={provider !== 'gemini'}>
-		<div>
-			<label class="hk-field-label" for="gemini-model">Model</label>
-			<input
-				id="gemini-model"
-				name="gemini.model"
-				class="hk-input hk-mono"
-				value={s.gemini.model}
-				placeholder={defaultModel('gemini')}
-				spellcheck="false"
-				aria-invalid={!!errors['gemini.model'] || undefined}
-				aria-describedby={described('gemini.model')}
-			/>
-			{#if errors['gemini.model']}<p class="hk-field-error" id={errId('gemini.model')}>
-					{errors['gemini.model']}
-				</p>{/if}
-		</div>
-		<div>
-			<SecretField
-				id="gemini-key"
-				name="gemini.apiKey"
-				label="API key"
-				set={data.keysSet.gemini}
-				lost={data.keysLost.gemini}
-				env={data.envLocks.geminiKey ? 'GEMINI_API_KEY' : null}
-				invalid={!!errors['gemini.apiKey']}
-				describedby={described('gemini.apiKey')}
-				clearable
-			/>
-			{#if errors['gemini.apiKey']}<p class="hk-field-error" id={errId('gemini.apiKey')}>
-					{errors['gemini.apiKey']}
-				</p>{/if}
-		</div>
-	</div>
-
 	<div class="group" hidden={provider !== 'whisper-cpp'}>
 		<div>
 			<label class="hk-field-label" for="whisper-url">Server URL</label>
@@ -317,6 +277,7 @@
 				class="hk-input hk-mono"
 				type="url"
 				value={s.whisperCpp.url}
+				placeholder="http://whisper.example.com:8080"
 				aria-invalid={!!errors['whisperCpp.url'] || undefined}
 				aria-describedby={described('whisperCpp.url')}
 			/>
@@ -482,8 +443,13 @@
 	}
 	.providers {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.5rem;
+	}
+	@media (min-width: 640px) {
+		.providers {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
 	}
 	.hk-option input {
 		accent-color: var(--hk-accent);

@@ -86,7 +86,6 @@ export async function decodePcm(path: string, opts: DecodeOptions = {}): Promise
 const codecs: Record<UploadFormat, { args: string[]; mime: string; ext: string }> = {
 	// About 120 KB per 30 s
 	webm: { args: ['-c:a', 'libopus', '-b:a', '32k'], mime: 'audio/webm', ext: 'webm' },
-	ogg: { args: ['-c:a', 'libopus', '-b:a', '32k'], mime: 'audio/ogg', ext: 'ogg' },
 	// 32 KB/s, lossless
 	wav: { args: ['-c:a', 'pcm_s16le'], mime: 'audio/wav', ext: 'wav' },
 	mp3: { args: ['-c:a', 'libmp3lame', '-b:a', '48k'], mime: 'audio/mpeg', ext: 'mp3' }

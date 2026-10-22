@@ -10,15 +10,15 @@ integration appends each note under `## Notes` in your Obsidian daily note over 
 Index 01 app ──POST multipart, HMAC signed──▶ /api/index01/webhook
                                                    │ verify signature, store audio, reply 200
                                                    ▼
-                                     transcribe: openai | openai-audio | gemini | whisper-cpp
+                                        transcribe: openai | openai-audio | whisper-cpp
                                                    │
                                                    ▼
                                 integrations: Obsidian daily note, "## Notes" section
 ```
 
-One SvelteKit app (Node), one Postgres and a `/data` volume for audio. Two optional sidecars run
-from the same compose file: `obsidian-rest` (a headless vault server with MCP) and `whisper`
-(whisper.cpp for local transcription). The app signs you in through any OIDC provider.
+The compose file runs two services: the SvelteKit app (Node, with a `/data` volume for audio) and
+Postgres. The Obsidian REST server and whisper.cpp are hosted separately; the app reaches them by
+URL. It signs you in through any OIDC provider.
 
 ## Deploy on Coolify
 
@@ -34,9 +34,10 @@ from the same compose file: `obsidian-rest` (a headless vault server with MCP) a
      at the issuer in.
    - `TZ`: your zone, for example `Africa/Nairobi`. Daily note dates use it unless you pick
      another zone on the Transcription page.
-   - `OPENAI_API_KEY` or `GEMINI_API_KEY`, or set keys later in the UI.
-   - `COMPOSE_PROFILES`: `obsidian`, `whisper`, or `obsidian,whisper` to start the sidecars.
-   - `OBSIDIAN_API_KEY` when you run `obsidian-rest`: `openssl rand -hex 32`.
+   - `OPENAI_API_KEY`, or set the key later on the Transcription page.
+   - `OBSIDIAN_MCP_URL`: the `/mcp/` endpoint of your Obsidian REST server, for example
+     `https://vault.example.com/mcp/`, and `OBSIDIAN_API_KEY`: its bearer key. See
+     [Obsidian](#obsidian).
 
    Coolify generates `SERVICE_USER_POSTGRES`, `SERVICE_PASSWORD_POSTGRES` and
    `SERVICE_HEX_64_AUTHSECRET` ([magic variables](https://coolify.io/docs/knowledge-base/docker/compose)).
@@ -46,9 +47,6 @@ from the same compose file: `obsidian-rest` (a headless vault server with MCP) a
 5. Deploy. The app applies database migrations on start. `https://index.example.com/healthz`
    answers `ok` once it can reach Postgres.
 6. Sign in, open **Webhook**, and copy the URL and signing secret into the Index 01 app.
-
-If the sidecars do not start, set **Custom Start Command** to
-`docker compose --profile obsidian up -d` (add `--profile whisper` as needed).
 
 Without Coolify, put the same variables, including the three `SERVICE_*` values, in a `.env` file
 next to `compose.yaml`, then run `docker compose up -d` behind a TLS proxy that sets
@@ -102,23 +100,23 @@ so you can remove `AUTH_SECRET_PREVIOUS` after that first start.
 
 ## Obsidian
 
-The Obsidian integration speaks MCP to the Local REST API. You have two ways to run that.
+The Obsidian integration speaks MCP to
+[Heracraft/obsidian-remote-rest-api](https://github.com/Heracraft/obsidian-remote-rest-api), a
+headless vault server you host on its own, or to the **Local REST API** plugin inside desktop
+Obsidian. Both serve the same `/mcp/` endpoint.
 
-**Headless, on the server.** Enable the `obsidian` profile. The `obsidian-rest` container
-([Heracraft/obsidian-remote-rest-api](https://github.com/Heracraft/obsidian-remote-rest-api))
-serves the vault in the `vault` volume without Obsidian itself. Get your vault into that volume
-with Obsidian Sync, Syncthing or git, or replace the volume with a bind mount of a folder that a
-sync tool already keeps current. The container runs as uid 1000, so that folder must be writable
-by uid 1000. In the integration form use:
+With `OBSIDIAN_MCP_URL` set, the app creates a **Daily note** integration on start if it has no
+Obsidian integration yet. Its URL and API key fields stay blank, so they read `OBSIDIAN_MCP_URL`
+and `OBSIDIAN_API_KEY`; the form shows the env URL as the field's placeholder and the key as
+**From OBSIDIAN_API_KEY**. A value you save in the form overrides the env, and **Remove** on a
+saved key goes back to it. Deleting the last Obsidian integration brings **Daily note** back on
+the next start; turn it off instead.
 
-- URL `http://obsidian-rest:27123/mcp/`
-- API key: the value of `OBSIDIAN_API_KEY`
-
-**Desktop Obsidian.** Install the **Local REST API** community plugin in Obsidian, turn on its MCP
-server, and copy the API key from the plugin settings. The URL is
-`https://<computer>:27124/mcp/` (tick **Accept a self-signed certificate**) or
-`http://<computer>:27123/mcp/` with the plugin's insecure server on. The server must reach that
-computer, for example over Tailscale, and notes only arrive while Obsidian is open.
+**Desktop Obsidian.** Install the **Local REST API** community plugin, turn on its MCP server, and
+copy the API key from the plugin settings. The URL is `https://<computer>:27124/mcp/` (tick
+**Accept a self-signed certificate**) or `http://<computer>:27123/mcp/` with the plugin's insecure
+server on. The app must reach that computer, for example over Tailscale, and notes only arrive
+while Obsidian is open.
 
 Neither server reads Obsidian's daily note settings, so set the note path (default
 `{{date:YYYY-MM-DD}}.md`) and heading (`Notes`) in the integration to match your vault.
@@ -132,19 +130,15 @@ when you mix languages.
 | -------------- | ----------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `openai`       | `POST /audio/transcriptions`              | `OPENAI_API_KEY` or the UI | Default `gpt-transcribe`. Any OpenAI-compatible server works by changing the base URL: Groq, speaches |
 | `openai-audio` | `POST /chat/completions` with audio input | `OPENAI_API_KEY` or the UI | `gpt-audio` with a verbatim prompt. Returns detected languages                                        |
-| `gemini`       | `generateContent`                         | `GEMINI_API_KEY` or the UI | `gemini-3.8-flash` by default. `gemini-3.5-flash-lite` costs less                                     |
-| `whisper-cpp`  | `POST /inference`                         | none                       | Local, profile `whisper`, URL `http://whisper:8080`. Audio stays on your server                       |
+| `whisper-cpp`  | `POST /inference`                         | none                       | A whisper.cpp server you host. Audio stays on your servers                                            |
 
-The `whisper` container downloads `WHISPER_MODEL` (default `base`, 148 MB) into its volume on
-first start and runs on `WHISPER_THREADS` CPU threads. `small` is more accurate and about three
-times slower. Whisper models detect one language per 30 seconds, so on mixed-language audio
-they do worse than the hosted providers; the app cuts long recordings at pauses to limit that.
+whisper.cpp is optional. Run its `whisper-server` (image `ghcr.io/ggml-org/whisper.cpp:main`)
+anywhere the app can reach, then enter its URL, for example `http://10.0.0.5:8080`, on the
+Transcription page. There is no default URL. Whisper models detect one language per 30 seconds,
+so on mixed-language audio they do worse than the hosted providers; the app cuts long recordings
+at pauses to limit that.
 
-If `whisper` restart-loops after a first start that was cut off, remove the model volume and
-start it again: `docker compose rm -sf whisper && docker volume rm <project>_whisper-models`.
-
-Google serves the Gemini 2.5 models only to keys that used them before. Recordings over 2 hours
-are not transcribed.
+Recordings over 2 hours are not transcribed.
 
 ## Local development
 
@@ -157,11 +151,11 @@ pnpm db:up                      # Postgres on 5432, mock OIDC on 8090
 pnpm dev                        # http://localhost:5173, any username signs in (ALLOWED_EMAILS="*")
 ```
 
-Optional services from `compose.dev.yaml`:
-
-- `pnpm obsidian:up`: vault server on `http://localhost:27123/mcp/`, key `devkey`, vault in
-  `./data/vault`.
-- `pnpm whisper:up`: whisper.cpp on `http://localhost:8080`.
+`pnpm obsidian:up` runs `scripts/obsidian-dev.sh`: a vault server in Docker on
+`http://127.0.0.1:27123/mcp/`, key `testkey123`, serving a fresh copy of `scripts/sample-vault`.
+Pass a folder to serve that vault instead (`pnpm obsidian:up ./my-vault`); `pnpm obsidian:down`
+removes it. Put the URL and key in `OBSIDIAN_MCP_URL` and `OBSIDIAN_API_KEY` in `.env`, and the
+next `pnpm dev` creates the **Daily note** integration.
 
 The dev compose project is `index-01-router-dev`. Containers started before it got that name
 belong to `index-01-router`; move them once (the volumes stay):

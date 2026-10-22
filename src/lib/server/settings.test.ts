@@ -8,7 +8,6 @@ const env = vi.hoisted(() => ({
 	AUTH_SECRET_PREVIOUS: [] as string[],
 	INDEX01_WEBHOOK_SECRET: undefined as string | undefined,
 	OPENAI_API_KEY: undefined as string | undefined,
-	GEMINI_API_KEY: undefined as string | undefined,
 	TZ: 'Africa/Nairobi'
 }));
 
@@ -16,9 +15,6 @@ vi.mock('$app/env/private', () => ({
 	DATABASE_URL: 'postgres://invalid',
 	get OPENAI_API_KEY() {
 		return env.OPENAI_API_KEY;
-	},
-	get GEMINI_API_KEY() {
-		return env.GEMINI_API_KEY;
 	},
 	get AUTH_SECRET() {
 		return env.AUTH_SECRET;
@@ -85,7 +81,6 @@ beforeEach(() => {
 	env.AUTH_SECRET_PREVIOUS = [];
 	env.INDEX01_WEBHOOK_SECRET = undefined;
 	env.OPENAI_API_KEY = undefined;
-	env.GEMINI_API_KEY = undefined;
 	store.settings.clear();
 	store.integrations = [];
 	vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -95,9 +90,9 @@ async function saveUnderA() {
 	const t = await settings.getStored('transcription');
 	await settings.setStored('transcription', {
 		...t,
-		provider: 'gemini',
+		provider: 'openai-audio',
 		openai: { ...t.openai, apiKey: 'sk-openai' },
-		gemini: { ...t.gemini, apiKey: 'gm-key' }
+		openaiAudio: { ...t.openaiAudio, apiKey: 'sk-audio' }
 	});
 	await settings.setStored('webhook', { secret: 'old-secret', requireSignature: false });
 }
@@ -107,13 +102,13 @@ describe('settings after AUTH_SECRET changes', () => {
 		await saveUnderA();
 		env.AUTH_SECRET = B;
 		const { value, lost } = await settings.getStoredWithStatus('transcription');
-		expect(lost).toEqual(['openai.apiKey', 'gemini.apiKey']);
-		expect(value.provider).toBe('gemini');
+		expect(lost).toEqual(['openai.apiKey', 'openaiAudio.apiKey']);
+		expect(value.provider).toBe('openai-audio');
 		expect(value.openai.apiKey).toBe('');
-		expect(value.gemini.apiKey).toBe('');
+		expect(value.openaiAudio.apiKey).toBe('');
 		expect(value.openai.model).toBe('');
 		await expect(settings.getSettings('transcription')).resolves.toMatchObject({
-			provider: 'gemini'
+			provider: 'openai-audio'
 		});
 	});
 
@@ -150,7 +145,7 @@ describe('settings after AUTH_SECRET changes', () => {
 		expect(lost).toEqual([]);
 		expect(value.openai.apiKey).toBe('sk-openai');
 		env.AUTH_SECRET_PREVIOUS = [];
-		expect((await settings.getStored('transcription')).gemini.apiKey).toBe('gm-key');
+		expect((await settings.getStored('transcription')).openaiAudio.apiKey).toBe('sk-audio');
 	});
 
 	it('re-encrypts settings and integration configs at start', async () => {
@@ -189,27 +184,23 @@ describe('session epoch', () => {
 });
 
 describe('env keys are fallbacks', () => {
-	it('uses OPENAI_API_KEY and GEMINI_API_KEY while nothing is stored', async () => {
+	it('uses OPENAI_API_KEY while nothing is stored', async () => {
 		env.OPENAI_API_KEY = 'sk-env';
-		env.GEMINI_API_KEY = 'gm-env';
 		const t = await settings.getSettings('transcription');
 		expect(t.openai.apiKey).toBe('sk-env');
 		expect(t.openaiAudio.apiKey).toBe('sk-env');
-		expect(t.gemini.apiKey).toBe('gm-env');
 	});
 
 	it('prefers a key saved in the UI over the env key', async () => {
 		env.OPENAI_API_KEY = 'sk-env';
-		env.GEMINI_API_KEY = 'gm-env';
 		const t = await settings.getStored('transcription');
 		await settings.setStored('transcription', {
 			...t,
-			openai: { ...t.openai, apiKey: 'sk-stored' },
-			gemini: { ...t.gemini, apiKey: 'gm-stored' }
+			openai: { ...t.openai, apiKey: 'sk-stored' }
 		});
 		const out = await settings.getSettings('transcription');
 		expect(out.openai.apiKey).toBe('sk-stored');
-		expect(out.gemini.apiKey).toBe('gm-stored');
+		expect(out.openaiAudio.apiKey).toBe('sk-env');
 		// Removing the stored key falls back to the env one
 		await settings.setStored('transcription', { ...t, openai: { ...t.openai, apiKey: '' } });
 		expect((await settings.getSettings('transcription')).openai.apiKey).toBe('sk-env');
@@ -220,11 +211,47 @@ describe('model defaults', () => {
 	it('stores no model, so each provider uses its defaultModel', async () => {
 		const { openai } = await import('./transcribe/openai.ts');
 		const { openaiAudio } = await import('./transcribe/openai-audio.ts');
-		const { gemini, GEMINI_DEFAULT_MODEL } = await import('./transcribe/gemini.ts');
 		const t = await settings.getStored('transcription');
-		expect([t.openai.model, t.openaiAudio.model, t.gemini.model]).toEqual(['', '', '']);
+		expect([t.openai.model, t.openaiAudio.model]).toEqual(['', '']);
 		expect(openai.model(t)).toBe(openai.defaultModel);
 		expect(openaiAudio.model(t)).toBe(openaiAudio.defaultModel);
-		expect(gemini.model(t)).toBe(GEMINI_DEFAULT_MODEL);
+	});
+
+	it('has no whisper.cpp URL until one is set', async () => {
+		expect((await settings.getStored('transcription')).whisperCpp.url).toBe('');
+	});
+});
+
+describe('rows from versions with the gemini provider', () => {
+	it('load with the default provider and without the gemini fields', async () => {
+		store.settings.set('transcription', {
+			provider: 'gemini',
+			openai: { baseUrl: 'https://api.openai.com/v1', apiKey: encrypt('sk-openai'), model: '' },
+			gemini: { apiKey: encrypt('gm-key'), model: 'gemini-3.8-flash' },
+			whisperCpp: { url: 'http://whisper:8080' },
+			languages: ['sw'],
+			prompt: '',
+			chunking: true
+		});
+		const { value, lost } = await settings.getStoredWithStatus('transcription');
+		expect(lost).toEqual([]);
+		expect(value.provider).toBe('openai');
+		expect(value).not.toHaveProperty('gemini');
+		expect(value.openai.apiKey).toBe('sk-openai');
+		expect(value.languages).toEqual(['sw']);
+		expect(settings.keyReadiness(value, lost)).toEqual({
+			openai: 'ok',
+			'openai-audio': 'missing',
+			'whisper-cpp': null
+		});
+	});
+
+	it('keep a known provider', async () => {
+		store.settings.set('transcription', { provider: 'whisper-cpp', gemini: { apiKey: '' } });
+		const value = await settings.getStored('transcription');
+		expect(value.provider).toBe('whisper-cpp');
+		expect(Object.keys(value).sort()).toEqual(
+			['chunking', 'languages', 'openai', 'openaiAudio', 'prompt', 'provider', 'whisperCpp'].sort()
+		);
 	});
 });

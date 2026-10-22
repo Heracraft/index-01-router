@@ -4,7 +4,8 @@
 # SERVICE_* names are Coolify magic variables, generated on the first deploy and shown under
 # Environment Variables: https://coolify.io/docs/knowledge-base/docker/compose
 #
-# Optional sidecars are compose profiles. Enable them with COMPOSE_PROFILES=obsidian,whisper.
+# The Obsidian REST server and whisper.cpp run elsewhere. Point OBSIDIAN_MCP_URL at the vault
+# server's /mcp/ endpoint and set its key in OBSIDIAN_API_KEY.
 
 services:
   app:
@@ -28,7 +29,8 @@ services:
       - OIDC_REQUIRE_VERIFIED_EMAIL=${OIDC_REQUIRE_VERIFIED_EMAIL:-}
       - INDEX01_WEBHOOK_SECRET=${INDEX01_WEBHOOK_SECRET:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OBSIDIAN_MCP_URL=${OBSIDIAN_MCP_URL:-}
+      - OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY:-}
       - TZ=${TZ:-UTC}
       - BODY_SIZE_LIMIT=${BODY_SIZE_LIMIT:-51M}
     volumes:
@@ -52,53 +54,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # Headless vault server with MCP. Integration URL: http://obsidian-rest:27123/mcp/
-  obsidian-rest:
-    image: ghcr.io/heracraft/obsidian-remote-rest-api:latest
-    profiles: [obsidian]
-    restart: unless-stopped
-    user: '1000:1000'
-    environment:
-      - API_KEY=${OBSIDIAN_API_KEY:-}
-      - ENABLE_INSECURE_SERVER=true
-      - DATA_DIR=/data
-    volumes:
-      # Sync your vault into this volume (Obsidian Sync, Syncthing, git), or bind mount a folder
-      - vault:/vault
-      - obsidian-data:/data
-
-  # whisper.cpp on the CPU. Transcription URL: http://whisper:8080. Downloads the model on first start
-  whisper:
-    image: ghcr.io/ggml-org/whisper.cpp:main
-    profiles: [whisper]
-    restart: unless-stopped
-    entrypoint: ['bash', '-c']
-    command:
-      - >-
-        set -e;
-        m=/models/ggml-$${WHISPER_MODEL}.bin;
-        if [ ! -s "$$m" ]; then
-          rm -rf /models/.tmp; mkdir -p /models/.tmp;
-          /app/models/download-ggml-model.sh "$${WHISPER_MODEL}" /models/.tmp;
-          mv "/models/.tmp/ggml-$${WHISPER_MODEL}.bin" "$$m";
-          rm -rf /models/.tmp;
-        fi;
-        exec whisper-server --host 0.0.0.0 --port 8080 -t "$${WHISPER_THREADS}" -m "$$m"
-    environment:
-      - WHISPER_MODEL=${WHISPER_MODEL:-base}
-      - WHISPER_THREADS=${WHISPER_THREADS:-4}
-    volumes:
-      - whisper-models:/models
-    healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8080/health']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 600s
-
 volumes:
   app-data:
   pg-data:
-  vault:
-  obsidian-data:
-  whisper-models:

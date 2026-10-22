@@ -23,9 +23,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 			? transcription.openai.model
 			: transcription.provider === 'openai-audio'
 				? transcription.openaiAudio.model
-				: transcription.provider === 'gemini'
-					? transcription.gemini.model
-					: '';
+				: '';
 	return {
 		user: { email: locals.session?.email ?? null, name: locals.session?.name ?? null },
 		timezone: general.timezone,

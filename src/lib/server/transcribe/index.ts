@@ -15,7 +15,6 @@ import {
 	type Span
 } from './chunk.ts';
 import { isHallucination } from './clean.ts';
-import { gemini } from './gemini.ts';
 import { openai } from './openai.ts';
 import { openaiAudio } from './openai-audio.ts';
 import { normalizeLanguages } from './prompt.ts';
@@ -37,7 +36,6 @@ export type { TranscribeInput, TranscribeResult } from './types.ts';
 const registry: Record<TranscribeProvider, Provider> = {
 	openai,
 	'openai-audio': openaiAudio,
-	gemini,
 	'whisper-cpp': whisperCpp
 };
 

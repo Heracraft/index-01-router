@@ -14,7 +14,8 @@ vi.mock('$app/env/private', () => ({
 	FFMPEG_PATH: 'ffmpeg',
 	INDEX01_WEBHOOK_SECRET: undefined,
 	OPENAI_API_KEY: undefined,
-	GEMINI_API_KEY: undefined,
+	OBSIDIAN_MCP_URL: undefined,
+	OBSIDIAN_API_KEY: undefined,
 	TZ: 'UTC'
 }));
 
@@ -25,7 +26,9 @@ describe('transcribeBudgetMs', () => {
 	const min = 60_000;
 	it('gives short recordings 15 minutes', () => {
 		expect(transcribeBudgetMs({ durationMs: 30_000, audioBytes: 1 }, 'openai')).toBe(15 * min);
-		expect(transcribeBudgetMs({ durationMs: null, audioBytes: null }, 'gemini')).toBe(15 * min);
+		expect(transcribeBudgetMs({ durationMs: null, audioBytes: null }, 'openai-audio')).toBe(
+			15 * min
+		);
 	});
 
 	it('scales with length, three times for whisper.cpp', () => {

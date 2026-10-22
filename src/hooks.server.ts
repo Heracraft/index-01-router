@@ -7,12 +7,14 @@ import { startWorker, stopAccepting, whenIdle } from '#lib/server/pipeline.ts';
 import { installShutdown } from '#lib/server/shutdown.ts';
 import { publicOrigin } from '#lib/server/origin.ts';
 import { reencryptStored } from '#lib/server/settings.ts';
+import { ensureEnvIntegrations } from '#lib/server/integrations/index.ts';
 import { ALLOWED_EMAILS } from '$app/env/private';
 
 export const init: ServerInit = async () => {
 	if (building) return;
 	await runMigrations();
 	await reencryptStored();
+	await ensureEnvIntegrations();
 	if (ALLOWED_EMAILS.includes('*')) {
 		console.warn('ALLOWED_EMAILS is "*": any account at the identity provider can sign in');
 	}

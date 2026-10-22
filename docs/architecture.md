@@ -1,8 +1,9 @@
 # Architecture
 
-One SvelteKit 3 app (adapter-node), one Postgres, one data volume. Optional sidecars in the same
-compose file: `obsidian-rest` (Heracraft/obsidian-remote-rest-api, headless vault server with MCP)
-and `whisper` (whisper.cpp server).
+One SvelteKit 3 app (adapter-node), one Postgres, one data volume: the two services in
+`compose.yaml`. The Obsidian REST server (Heracraft/obsidian-remote-rest-api) and the optional
+whisper.cpp server are hosted separately and reached by URL (`OBSIDIAN_MCP_URL`, the whisper.cpp
+URL on the Transcription page).
 
 ```
 Index 01 app ──POST multipart, HMAC signed──▶ /api/index01/webhook
@@ -11,7 +12,7 @@ Index 01 app ──POST multipart, HMAC signed──▶ /api/index01/webhook
                                         recordings row (received)
                                                    │ pipeline worker (in process, concurrency 2)
                                                    ▼
-                              transcribe (openai | openai-audio | gemini | whisper-cpp)
+                              transcribe (openai | openai-audio | whisper-cpp)
                                                    │ transcript saved (routing)
                                                    ▼
                      deliveries: one per enabled integration whose triggers match
@@ -59,22 +60,22 @@ every non-GET request outside the webhook. adapter-node needs `BODY_SIZE_LIMIT=5
 All server code is under `src/lib/server`, imported as `#lib/server/<file>.ts` (no `$lib` in Kit 3).
 Env comes from `$app/env/private` (declared in `src/env.ts`).
 
-| File                          | Exports                                                                                                                                                                                                                                                                                                                                                         |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `db/schema.ts`, `db/index.ts` | tables, `db`, `runMigrations()`; casing is snake_case                                                                                                                                                                                                                                                                                                           |
-| `crypto.ts`                   | `encrypt`, `decrypt`, `isEncrypted` (AES-GCM from AUTH_SECRET)                                                                                                                                                                                                                                                                                                  |
-| `settings.ts`                 | `getSettings(key)`, `getStored(key)`, `setStored(key, value)`, `envLocks`; keys `transcription`, `general`, `webhook`                                                                                                                                                                                                                                           |
-| `auth.ts`                     | OIDC `signIn`, `callback`, `signOut`, `handle`; `locals.session`                                                                                                                                                                                                                                                                                                |
-| `storage.ts`                  | `saveAudio(id, recordedAt, bytes, mime) -> {path, bytes}`, `absolutePath(rel)`, `deleteAudio(rel)`, `probeDurationMs(abs) -> number \| null`                                                                                                                                                                                                                    |
-| `webhook-log.ts`              | `logWebhookEvent(event)` (never throws, keeps 200 + 50 rejected), `listWebhookEvents(limit)`, `errorSummary(e)`                                                                                                                                                                                                                                                 |
-| `index01/verify.ts`           | `verifyIndexWebhook(headers, raw, secret, {toleranceSec?, nowSec?})`                                                                                                                                                                                                                                                                                            |
-| `ingest.ts`                   | `createRecording(input) -> {recording, duplicate}`; inserts row, stores audio, probes duration, calls `enqueue`; `deleteRecording(id) -> boolean`                                                                                                                                                                                                               |
-| `transcribe/index.ts`         | `transcribe(input, deps?) -> TranscribeResult`, `testTranscription(settings, deps?) -> string`, `PROVIDERS`                                                                                                                                                                                                                                                     |
-| `transcribe/*.ts`             | one file per provider, `audio.ts` (ffmpeg decode/encode), `chunk.ts` (pause chunker)                                                                                                                                                                                                                                                                            |
-| `integrations/index.ts`       | `kinds`, `listIntegrations()` (secrets decrypted, server only), `listIntegrationsForUI()`/`getIntegrationForUI(id)` (secrets blanked, `secretsSet`), `getIntegration(id)`, `saveIntegration(input)`, `deleteIntegration(id) -> {deleted, recordingIds}`, `testIntegration(kind, config, id?)`, `integrationMatches(integration, trigger)`, `TRIGGERS`, `isKind` |
-| `integrations/obsidian.ts`    | the `obsidian` `IntegrationKind`, MCP client                                                                                                                                                                                                                                                                                                                    |
-| `pipeline.ts`                 | `startWorker()`, `enqueue(id)`, `retryRecording(id, from)`, `redeliver(deliveryId)` (both return once queued, throw while the recording is busy), `settleAfterIntegrationDelete(recordingIds)`, `onChange(listener)`, `whenIdle()`, `isProcessing(id)`                                                                                                          |
-| `time.ts`                     | `formatDate(date, format, timeZone)` with tokens YYYY MM DD HH mm ss ddd dddd MMM MMMM                                                                                                                                                                                                                                                                          |
+| File                          | Exports                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db/schema.ts`, `db/index.ts` | tables, `db`, `runMigrations()`; casing is snake_case                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `crypto.ts`                   | `encrypt`, `decrypt`, `isEncrypted` (AES-GCM from AUTH_SECRET)                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `settings.ts`                 | `getSettings(key)`, `getStored(key)`, `setStored(key, value)`, `envLocks`; keys `transcription`, `general`, `webhook`                                                                                                                                                                                                                                                                                                                                                            |
+| `auth.ts`                     | OIDC `signIn`, `callback`, `signOut`, `handle`; `locals.session`                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `storage.ts`                  | `saveAudio(id, recordedAt, bytes, mime) -> {path, bytes}`, `absolutePath(rel)`, `deleteAudio(rel)`, `probeDurationMs(abs) -> number \| null`                                                                                                                                                                                                                                                                                                                                     |
+| `webhook-log.ts`              | `logWebhookEvent(event)` (never throws, keeps 200 + 50 rejected), `listWebhookEvents(limit)`, `errorSummary(e)`                                                                                                                                                                                                                                                                                                                                                                  |
+| `index01/verify.ts`           | `verifyIndexWebhook(headers, raw, secret, {toleranceSec?, nowSec?})`                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `ingest.ts`                   | `createRecording(input) -> {recording, duplicate}`; inserts row, stores audio, probes duration, calls `enqueue`; `deleteRecording(id) -> boolean`                                                                                                                                                                                                                                                                                                                                |
+| `transcribe/index.ts`         | `transcribe(input, deps?) -> TranscribeResult`, `testTranscription(settings, deps?) -> string`, `PROVIDERS`                                                                                                                                                                                                                                                                                                                                                                      |
+| `transcribe/*.ts`             | one file per provider, `audio.ts` (ffmpeg decode/encode), `chunk.ts` (pause chunker)                                                                                                                                                                                                                                                                                                                                                                                             |
+| `integrations/index.ts`       | `kinds`, `listIntegrations()`/`getIntegration(id)` (secrets decrypted, env fallbacks applied, server only), `listIntegrationsForUI()`/`getIntegrationForUI(id)` (secrets blanked, `secretsSet`, `envSet`, `envValues`), `envFor(kind)`, `saveIntegration(input)`, `deleteIntegration(id) -> {deleted, recordingIds}`, `testIntegration(kind, config, id?, timeZone, clearSecrets?)`, `ensureEnvIntegrations()`, `integrationMatches(integration, trigger)`, `TRIGGERS`, `isKind` |
+| `integrations/obsidian.ts`    | the `obsidian` `IntegrationKind`, MCP client                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `pipeline.ts`                 | `startWorker()`, `enqueue(id)`, `retryRecording(id, from)`, `redeliver(deliveryId)` (both return once queued, throw while the recording is busy), `settleAfterIntegrationDelete(recordingIds)`, `onChange(listener)`, `whenIdle()`, `isProcessing(id)`                                                                                                                                                                                                                           |
+| `time.ts`                     | `formatDate(date, format, timeZone)` with tokens YYYY MM DD HH mm ss ddd dddd MMM MMMM                                                                                                                                                                                                                                                                                                                                                                                           |
 
 `createRecording` input:
 
@@ -100,18 +101,19 @@ or a run of outro lines like "Please subscribe and thumbs up. More videos to com
 ## Transcription
 
 Settings live in the `transcription` settings row (`TranscriptionSettings` in `settings.ts`).
+A stored row that names a provider no longer offered (`gemini`) loads with the default provider,
+and fields of removed providers are dropped on read.
 
 | Provider       | Call                                                                                                                  | Notes                                                                                                                                               |
 | -------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `openai`       | `POST {baseUrl}/audio/transcriptions`                                                                                 | OpenAI `gpt-transcribe` (default) takes repeated `languages[]`, `prompt`; whisper-style models take one `language`. Works for Groq and speaches too |
 | `openai-audio` | `POST {baseUrl}/chat/completions` with `input_audio`                                                                  | Audio piped into an LLM (`gpt-audio`). Strict verbatim prompt, JSON out `{text, languages}`                                                         |
-| `gemini`       | `POST generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`                                        | `inline_data` audio, `responseSchema` JSON `{text, languages}`. Default `gemini-3.8-flash`, thinking level low                                      |
-| `whisper-cpp`  | `POST {url}/inference` multipart `file` (16 kHz wav), `language=auto` or the one hint, `response_format=verbose_json` | Local, compose profile `whisper`                                                                                                                    |
+| `whisper-cpp`  | `POST {url}/inference` multipart `file` (16 kHz wav), `language=auto` or the one hint, `response_format=verbose_json` | A whisper.cpp server hosted separately. No default URL: required when it is the provider                                                            |
 
 Code-switched audio: no single `language` (it forces one), languages passed as hints where the
 API supports a list, and the pause chunker (cuts at the longest pause between 15 and 30 s, 16 kHz
 mono; each provider gets its own encoding: opus for openai, wav for openai-audio and
-whisper-cpp, ogg/opus for gemini) since providers drop sentences at language switches in long clips (toolbar
+whisper-cpp) since providers drop sentences at language switches in long clips (toolbar
 measured 34% to 15% WER on Swahili/English).
 
 ## Integrations
@@ -122,13 +124,23 @@ measured 34% to 15% WER on Swahili/English).
 ### Obsidian
 
 Talks MCP (Streamable HTTP, `Authorization: Bearer <key>`) to either the headless
-`obsidian-remote-rest-api` container or the Local REST API plugin inside desktop Obsidian (same
-`/mcp/` endpoint and tools). Neither knows about daily notes, so the path is computed here.
+`obsidian-remote-rest-api` server, hosted separately, or the Local REST API plugin inside desktop
+Obsidian (same `/mcp/` endpoint and tools). Neither knows about daily notes, so the path is
+computed here.
 
-Config: `url` (`http://obsidian-rest:27123/mcp/`), `apiKey`, `insecureTls` (plugin's self-signed
+Config: `url` (no default; env `OBSIDIAN_MCP_URL`), `apiKey` (env `OBSIDIAN_API_KEY`), `insecureTls` (plugin's self-signed
 27124 cert), `notePath` (`{{date:YYYY-MM-DD}}.md`), `heading` (`Notes`), `entryTemplate`
 (`- {{time:HH:mm}} {{transcript}}`), `newNoteTemplate` (`## {{heading}}\n`; a stored `## Notes\n`,
 the old default, reads as the new one).
+
+Env fallbacks: a field with `FieldSpec.env` that is stored blank takes that variable's value
+wherever a config is used (`listIntegrations`, `getIntegration`, `testIntegration`, required-field
+checks on save). A stored value overrides it. Saves never store env values. The browser gets
+`envSet` (field to variable name) and `envValues` (non-secret values only, the URL for its
+placeholder), never the env key. `integrations/env.ts` reads the variables from
+`$app/env/private`. On start, `ensureEnvIntegrations()` (called from `hooks.server.ts` init after
+migrations) creates an enabled **Daily note** Obsidian integration on every trigger with URL and
+key blank, when `OBSIDIAN_MCP_URL` is set and no Obsidian integration exists.
 
 Deliver: compute path in the general timezone from `recordedAt`, `vault_get_document_map`; if the
 note is missing `vault_write` the new-note template; find the full heading path of `heading`

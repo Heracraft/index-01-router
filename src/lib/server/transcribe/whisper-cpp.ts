@@ -1,4 +1,4 @@
-// Local whisper.cpp server: POST {url}/inference, multipart. 16 kHz mono wav is whisper's own
+// whisper.cpp server, hosted separately: POST {url}/inference, multipart. 16 kHz mono wav is whisper's own
 // input, so this works whether or not the server runs with --convert.
 import { send, trimUrl } from './openai.ts';
 import { normalizeLanguages } from './prompt.ts';
@@ -68,7 +68,8 @@ export const whisperCpp: Provider = {
 	model: () => '',
 
 	async transcribe(audio, settings, ctx) {
-		const url = trimUrl(settings.whisperCpp.url);
+		const url = trimUrl(settings.whisperCpp.url.trim());
+		if (!url) throw new TranscribeError('No whisper.cpp server URL set', false);
 		const body = await send(
 			`${url}/inference`,
 			{ ...ctx, timeoutMs: ctx.timeoutMs ?? requestTimeoutMs(audio.bytes.byteLength) },

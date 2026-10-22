@@ -30,6 +30,8 @@ export interface FieldSpec {
 	/** Placeholders offered as insert chips under a textarea, e.g. 'time:HH:mm' */
 	tokens?: string[];
 	required?: boolean;
+	/** Env variable used while the stored value is blank. A stored value overrides it */
+	env?: string;
 }
 
 /** What a connection test found: the note a delivery today would write to, and its state */

@@ -25,7 +25,8 @@ vi.mock('$app/env/private', () => ({
 	FFMPEG_PATH: 'ffmpeg',
 	INDEX01_WEBHOOK_SECRET: undefined,
 	OPENAI_API_KEY: undefined,
-	GEMINI_API_KEY: undefined,
+	OBSIDIAN_MCP_URL: undefined,
+	OBSIDIAN_API_KEY: undefined,
 	TZ: 'UTC'
 }));
 

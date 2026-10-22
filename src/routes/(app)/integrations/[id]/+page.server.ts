@@ -7,6 +7,7 @@ import {
 	DeliverError,
 	deleteIntegration,
 	deliveryCount,
+	envFor,
 	getIntegrationForUI,
 	IntegrationInputError,
 	isKind,
@@ -61,7 +62,8 @@ export const load: PageServerLoad = async ({ params, url }) => {
 				triggers: [] as string[],
 				config,
 				secretsSet: {} as Record<string, boolean>,
-				secretsLost: {} as Record<string, boolean>
+				secretsLost: {} as Record<string, boolean>,
+				...envFor(kinds[kind])
 			},
 			deliveryCount: 0,
 			sample: await sample()
@@ -80,7 +82,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			triggers: row.triggers,
 			config: row.config,
 			secretsSet: row.secretsSet,
-			secretsLost: row.secretsLost
+			secretsLost: row.secretsLost,
+			envSet: row.envSet,
+			envValues: row.envValues
 		},
 		deliveryCount: await deliveryCount(row.id),
 		sample: await sample()
@@ -98,13 +102,16 @@ async function readForm(request: Request, kindName: string) {
 		else config[f.key] = String(data.get(key) ?? '');
 	}
 	const picked = data.getAll('triggers').map(String);
+	// Remove on a stored secret: blank it, so its env variable applies again
+	const clearSecrets = kind.secrets.filter((k) => data.get(`config.${k}.clear`) === '1');
 	return {
 		name: String(data.get('name') ?? ''),
 		enabled: data.get('enabled') === 'on',
 		// Every trigger ticked is stored as "all", so a trigger added later reaches it too
 		triggers: picked.length === TRIGGERS.length ? [] : picked,
 		noTriggers: picked.length === 0,
-		config
+		config,
+		clearSecrets
 	};
 }
 
@@ -137,7 +144,8 @@ export const actions: Actions = {
 				name: input.name,
 				enabled: input.enabled,
 				triggers: input.triggers,
-				config: input.config
+				config: input.config,
+				clearSecrets: input.clearSecrets
 			});
 			if (params.id === 'new') redirect(303, `/integrations/${row.id}`);
 			return { action: 'save', saved: true };
@@ -158,7 +166,8 @@ export const actions: Actions = {
 				kind,
 				input.config,
 				params.id === 'new' ? undefined : params.id,
-				timezone
+				timezone,
+				input.clearSecrets
 			);
 			return { action: 'test', test: { ok: true as const, ...found }, field: null };
 		} catch (e) {

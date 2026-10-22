@@ -31,7 +31,7 @@ export interface ObsidianConfig {
 }
 
 export const OBSIDIAN_DEFAULTS: ObsidianConfig = {
-	url: 'http://obsidian-rest:27123/mcp/',
+	url: '',
 	apiKey: '',
 	insecureTls: false,
 	notePath: '{{date:YYYY-MM-DD}}.md',
@@ -486,8 +486,16 @@ export const obsidian: IntegrationKind = {
 	kind: 'obsidian',
 	label: 'Obsidian',
 	fields: [
-		{ key: 'url', label: 'MCP URL', type: 'url', default: OBSIDIAN_DEFAULTS.url, required: true },
-		{ key: 'apiKey', label: 'API key', type: 'secret', required: true },
+		{
+			key: 'url',
+			label: 'MCP URL',
+			type: 'url',
+			default: OBSIDIAN_DEFAULTS.url,
+			placeholder: 'https://vault.example.com/mcp/',
+			required: true,
+			env: 'OBSIDIAN_MCP_URL'
+		},
+		{ key: 'apiKey', label: 'API key', type: 'secret', required: true, env: 'OBSIDIAN_API_KEY' },
 		{
 			key: 'insecureTls',
 			label: 'Accept a self-signed certificate',

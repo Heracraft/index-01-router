@@ -36,7 +36,6 @@ export const load: PageServerLoad = async () => {
 			provider: t.provider,
 			openai: { baseUrl: t.openai.baseUrl, model: t.openai.model },
 			openaiAudio: { baseUrl: t.openaiAudio.baseUrl, model: t.openaiAudio.model },
-			gemini: { model: t.gemini.model },
 			whisperCpp: { url: t.whisperCpp.url },
 			languages: t.languages,
 			prompt: t.prompt,
@@ -44,14 +43,12 @@ export const load: PageServerLoad = async () => {
 		},
 		keysSet: {
 			openai: !!t.openai.apiKey,
-			openaiAudio: !!t.openaiAudio.apiKey,
-			gemini: !!t.gemini.apiKey
+			openaiAudio: !!t.openaiAudio.apiKey
 		},
 		// Stored, but AUTH_SECRET no longer opens them
 		keysLost: {
 			openai: lost.includes('openai.apiKey'),
-			openaiAudio: lost.includes('openaiAudio.apiKey'),
-			gemini: lost.includes('gemini.apiKey')
+			openaiAudio: lost.includes('openaiAudio.apiKey')
 		},
 		ready: keyReadiness(t, lost),
 		chunkSeconds: CHUNK_SECONDS,
@@ -92,6 +89,16 @@ async function readForm(request: Request) {
 		return v.replace(/\/+$/, '');
 	};
 
+	// The whisper.cpp server is hosted separately and has no default: blank until the provider
+	// is whisper.cpp, then required. A form without the field keeps the stored URL
+	const whisperUrl = () => {
+		const field = 'whisperCpp.url';
+		const v = data.has(field) ? str(field) : stored.whisperCpp.url;
+		if (v) return url(field, v);
+		if (provider === 'whisper-cpp') errors[field] = 'Required.';
+		return '';
+	};
+
 	const languages = [
 		...new Set(
 			data
@@ -117,11 +124,7 @@ async function readForm(request: Request) {
 			model: str('openaiAudio.model'),
 			apiKey: key('openaiAudio.apiKey', stored.openaiAudio.apiKey)
 		},
-		gemini: {
-			model: str('gemini.model'),
-			apiKey: key('gemini.apiKey', stored.gemini.apiKey)
-		},
-		whisperCpp: { url: url('whisperCpp.url', stored.whisperCpp.url) },
+		whisperCpp: { url: whisperUrl() },
 		languages: badLang.length ? stored.languages : languages,
 		prompt: String(data.get('prompt') ?? '').replace(/\r\n?/g, '\n'),
 		chunking: data.get('chunking') === 'on'
@@ -142,23 +145,12 @@ async function readForm(request: Request) {
 /** The form field a provider error is about: the key, the URL, or the model */
 function fieldOf(provider: TranscribeProvider, message: string): string | null {
 	const prefix =
-		provider === 'openai'
-			? 'openai'
-			: provider === 'openai-audio'
-				? 'openaiAudio'
-				: provider === 'gemini'
-					? 'gemini'
-					: 'whisperCpp';
+		provider === 'openai' ? 'openai' : provider === 'openai-audio' ? 'openaiAudio' : 'whisperCpp';
 	if (/Key rejected|No API key/i.test(message))
 		return provider === 'whisper-cpp' ? null : `${prefix}.apiKey`;
-	if (/not available to this key|not offered|model/i.test(message) && provider !== 'whisper-cpp')
-		return `${prefix}.model`;
-	if (/Could not reach|Not a URL|did not answer|answered 404/i.test(message))
-		return provider === 'whisper-cpp'
-			? 'whisperCpp.url'
-			: provider === 'gemini'
-				? null
-				: `${prefix}.baseUrl`;
+	if (/not offered|model/i.test(message) && provider !== 'whisper-cpp') return `${prefix}.model`;
+	if (/Could not reach|Not a URL|did not answer|answered 404|server URL/i.test(message))
+		return provider === 'whisper-cpp' ? 'whisperCpp.url' : `${prefix}.baseUrl`;
 	return null;
 }
 
