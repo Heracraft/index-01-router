@@ -31,9 +31,10 @@
 			href={key > data.today ? undefined : dayHref(key)}
 			class="wd"
 			class:sel={key === data.day}
+			class:today={key === data.today}
 			class:future={key > data.today}
 			aria-current={key === data.day ? 'date' : undefined}
-			aria-label={longDay(key)}
+			aria-label={key === data.today ? `Today, ${longDay(key)}` : longDay(key)}
 			><em>{weekdayLetter(key)}</em><span>{Number(key.slice(8))}</span>{#if dot}<b
 					class="cd"
 					class:err={dot.failed}
@@ -43,59 +44,50 @@
 </nav>
 
 <div class="shell">
-	<Rail day={data.day} today={data.today} calendar={data.calendar} needs={data.needs} {tz} />
+	<Rail day={data.day} today={data.today} calendar={data.calendar} needs={data.needs} />
 
 	<main id="main" class="col" tabindex="-1">
 		{#if data.needs.count}
-			<a class="needbar" href="{resolve('/(app)/recordings')}?status=failed"
-				><span class="fdot" aria-hidden="true"></span>{data.needs.count}
-				{data.needs.count === 1 ? 'recording' : 'recordings'} not in a note<Icon name="right" /></a
+			<a class="needline" href="{resolve('/(app)/recordings')}?status=failed"
+				><span class="fdot" aria-hidden="true"></span>{data.needs.count} not in a note<Icon
+					name="right"
+					size={14}
+				/></a
 			>
 		{/if}
-		<div class="dayhead">
-			<h1 class="hk-h1-app dh-t">{title}</h1>
-			{#if data.note?.link}
-				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
-				<a class="hk-link open dh-open" href={data.note.link}
-					>Open in Obsidian <Icon name="external" size={14} /></a
-				>
-			{/if}
-			<nav class="dh-nav" aria-label="Days">
-				<a
-					class="hk-btn-ghost iconbtn"
-					href={dayHref(data.prev)}
-					aria-label={longDay(data.prev)}
-					title={shortDay(data.prev)}><Icon name="left" size={18} /></a
-				>
-				{#if data.next}
-					<a
-						class="hk-btn-ghost iconbtn"
-						href={dayHref(data.next)}
-						aria-label={longDay(data.next)}
-						title={shortDay(data.next)}><Icon name="right" size={18} /></a
-					>
-				{:else}
-					<span class="hk-btn-ghost iconbtn" aria-disabled="true"
-						><Icon name="right" size={18} /></span
-					>
-				{/if}
-			</nav>
-		</div>
-
 		<article class="sheet sheet--day">
-			{#if data.note?.path}
-				<div class="sheet-bar">
-					<span class="path"
-						>{data.note.path}<span class="path-h">{` › ${data.note.heading}`}</span></span
-					>
-					{#if data.note.link}
-						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
-						<a class="hk-link open" href={data.note.link}
-							>Open in Obsidian <Icon name="external" size={14} /></a
-						>
+			<header class="sheet-head">
+				<div class="sh-t">
+					<h1 class="hk-h1-app dh-t">{title}</h1>
+					{#if data.note?.path}
+						<p class="path">
+							{data.note.path}<span class="path-h">{` › ${data.note.heading}`}</span>
+						</p>
 					{/if}
 				</div>
-			{/if}
+				{#if data.note?.link}
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- obsidian:// opens the vault app -->
+					<a class="hk-link open dh-open" href={data.note.link} aria-label="Open in Obsidian"
+						><span class="open-l">Open in Obsidian</span><Icon name="external" size={14} /></a
+					>
+				{/if}
+				<nav class="dh-nav" aria-label="Days">
+					<a
+						class="hk-btn-ghost iconbtn"
+						href={dayHref(data.prev)}
+						aria-label={longDay(data.prev)}
+						title={shortDay(data.prev)}><Icon name="left" size={18} /></a
+					>
+					{#if data.next}
+						<a
+							class="hk-btn-ghost iconbtn"
+							href={dayHref(data.next)}
+							aria-label={longDay(data.next)}
+							title={shortDay(data.next)}><Icon name="right" size={18} /></a
+						>
+					{/if}
+				</nav>
+			</header>
 			<div class="sheet-body">
 				<h2 class="hk-sr">{data.note?.heading ?? 'Notes'}</h2>
 				{#if empty}

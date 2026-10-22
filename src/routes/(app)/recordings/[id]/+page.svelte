@@ -34,6 +34,10 @@
 	const desc = $derived(describeRecording(rec));
 	const ext = $derived(rec.audioMime?.split('/')[1]?.split(';')[0]?.replace(/^x-/, '') ?? '');
 	const hasTranscript = $derived(!!rec.transcript?.trim());
+	// Audio the transcriber could not decode plays nothing either: no player for it
+	const unreadable = $derived(
+		st.kind === 'failed' && st.step === 'transcribe' && st.fix.action === 'delete'
+	);
 	const failedDeliveries = $derived(data.deliveries.filter((d) => d.status === 'failed'));
 
 	// The day this recording sits in: the back link names it, the title is the time alone
@@ -48,6 +52,8 @@
 					timeZone: 'UTC'
 				})
 	);
+	/** Today, Yesterday, or Tue, Oct 20 */
+	const dayShort = $derived(rel ?? relShort);
 	const langs = $derived(rec.languages.map((l) => languageName(l)).join(', '));
 
 	// Problem block: the cause, one fact line and one action
@@ -103,10 +109,13 @@
 			// cancelled
 		}
 	}
+	/** 19:50, with the day when it is not the recording's own */
+	const sentAt = (at: Date | string) =>
+		dayKey(at, tz) === data.day ? formatTime(at, tz) : formatDateTime(at, tz);
 	const sentLine = (d: (typeof data.deliveries)[number]) =>
 		[
 			d.status === 'sent'
-				? `Sent ${formatTime(d.updatedAt, tz)}`
+				? `Sent ${sentAt(d.updatedAt)}`
 				: d.status === 'failed'
 					? 'Failed'
 					: d.status === 'pending'
@@ -162,18 +171,18 @@
 		today={data.rail.today}
 		calendar={data.rail.calendar}
 		needs={data.rail.needs}
-		{tz}
-		current={rec.id}
 	/>
 	<main id="main" class="col" tabindex="-1">
-		<a
-			class="back"
-			href={data.day === today
-				? resolve('/(app)')
-				: resolve('/(app)/day/[date]', { date: data.day })}><Icon name="left" />{dayName}</a
-		>
 		<div class="rechead">
-			<h1 class="hk-h1-app">{formatTime(rec.recordedAt, tz)}</h1>
+			<a
+				class="hk-btn-ghost iconbtn back"
+				href={data.day === today
+					? resolve('/(app)')
+					: resolve('/(app)/day/[date]', { date: data.day })}
+				aria-label={dayName}
+				title={dayName}><Icon name="left" size={18} /></a
+			>
+			<h1 class="hk-h1-app">{dayShort} · {formatTime(rec.recordedAt, tz)}</h1>
 			<p class="rec-m">
 				{#if rec.durationMs != null}<span>{formatDuration(rec.durationMs)}</span>{/if}
 				{#if rec.trigger !== 'single-click-hold'}<span>{triggerLabel(rec.trigger)}</span>{/if}
@@ -188,10 +197,10 @@
 		{#if st.kind === 'failed'}
 			<section class="issue" aria-label="Problem">
 				<span class="fdot" aria-hidden="true"></span>
-				<div class="issue-t">
-					<p class="issue-c">{st.cause}</p>
-					{#if fact}<p class="issue-f">{fact}</p>{/if}
-				</div>
+				<p class="issue-t">
+					<span class="issue-c">{st.cause}</span>
+					{#if fact}<span class="issue-f">{fact}</span>{/if}
+				</p>
 				{#if st.fix.action === 'delete'}
 					<ConfirmAction
 						action="?/delete"
@@ -216,7 +225,7 @@
 			</section>
 		{/if}
 
-		{#if rec.hasAudio}
+		{#if rec.hasAudio && !unreadable}
 			<Player id={rec.id} durationMs={rec.durationMs} />
 		{/if}
 
@@ -282,7 +291,8 @@
 		</section>
 
 		{#each hasTranscript ? data.contexts : [] as c (c.integrationId)}
-			{@const alone = c.sent && !c.before && !c.after && c.lines.length <= 1}
+			<!-- Sent: the note's path is enough, the words are above. Not sent: where it would land -->
+			{@const alone = c.sent}
 			<section class="sec" aria-label={sectionTitle(c)}>
 				<h2 class="sec-h">{sectionTitle(c)}</h2>
 				<article class="sheet sheet--sm">
@@ -375,7 +385,7 @@
 			</section>
 		{/if}
 
-		<details class="det">
+		<details class="det" open={st.kind === 'failed'}>
 			<summary>Details <Icon name="chevron" /></summary>
 			<dl>
 				<dt>Received</dt>

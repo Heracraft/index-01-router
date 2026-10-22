@@ -68,13 +68,7 @@
 <svelte:head><title>{data.q ? `${data.q} · ` : ''}Search · Index 01</title></svelte:head>
 
 <div class="shell">
-	<Rail
-		day={null}
-		today={data.rail.today}
-		calendar={data.rail.calendar}
-		needs={data.rail.needs}
-		{tz}
-	/>
+	<Rail day={null} today={data.rail.today} calendar={data.rail.calendar} />
 	<main id="main" class="col" tabindex="-1">
 		<h1 class="hk-sr">Search</h1>
 		<form
@@ -100,6 +94,18 @@
 				autocomplete="off"
 				use:focusEmpty
 			/>
+			{#if q}
+				<button
+					type="button"
+					class="hk-btn-ghost iconbtn sm clear"
+					aria-label="Clear search"
+					onclick={() => {
+						q = '';
+						clearTimeout(timer);
+						queueMicrotask(() => searchForm?.requestSubmit());
+					}}><Icon name="close" size={14} /></button
+				>
+			{/if}
 		</form>
 		<nav class="tabs" aria-label="Show">
 			{#each FILTERS as f (f.id)}

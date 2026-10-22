@@ -63,8 +63,8 @@
 		<p>{email ?? 'This account'}</p>
 		{#snippet footer()}
 			<form method="POST" action="/auth/signout" class="out">
-				<button class="hk-btn-ghost" name="everywhere" value="1">Everywhere</button>
-				<button class="hk-btn">This device</button>
+				<button class="hk-btn-secondary" name="everywhere" value="1">Sign out everywhere</button>
+				<button class="hk-btn">Sign out here</button>
 			</form>
 		{/snippet}
 	</Modal>

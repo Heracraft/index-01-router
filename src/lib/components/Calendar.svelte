@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	/* Month of days: a grey dot where recordings were, red where one failed */
 	import Icon from './Icon.svelte';
-	import { monthGrid, monthLabel } from './days.ts';
+	import { longDay, monthGrid, monthLabel } from './days.ts';
 
 	interface Props {
 		/** Picked day, or null for none */
@@ -24,6 +24,15 @@
 		return `${u.pathname}${u.search}`;
 	};
 	const canNext = $derived(nextMonth <= today.slice(0, 7));
+	/** Friday, October 16, 2 recordings, one failed */
+	const labelFor = (key: string, dot: { n: number; failed: boolean } | undefined) =>
+		[
+			key === today ? `Today, ${longDay(key)}` : longDay(key),
+			dot ? `${dot.n} ${dot.n === 1 ? 'recording' : 'recordings'}` : '',
+			dot?.failed ? 'one not in a note' : ''
+		]
+			.filter(Boolean)
+			.join(', ');
 </script>
 
 <div class="cal">
@@ -47,7 +56,7 @@
 					data-sveltekit-replacestate><Icon name="right" /></a
 				>
 			{:else}
-				<span class="hk-btn-ghost iconbtn sm" aria-disabled="true"><Icon name="right" /></span>
+				<span class="iconbtn sm" aria-hidden="true"></span>
 			{/if}
 		</span>
 		<!-- eslint-enable svelte/no-navigation-without-resolve -->
@@ -58,16 +67,20 @@
 			{#if !key}
 				<span></span>
 			{:else if key > today}
-				<span class="future">{Number(key.slice(8))}</span>
+				<span class="future" aria-hidden="true">{Number(key.slice(8))}</span>
 			{:else}
 				{@const dot = dots[key]}
 				<a
 					href={key === today ? resolve('/(app)') : resolve('/(app)/day/[date]', { date: key })}
 					class:sel={key === day}
+					class:today={key === today}
 					class:has={!!dot}
 					aria-current={key === day ? 'date' : undefined}
-					aria-label="{key}{dot ? `, ${dot.n} recordings` : ''}{dot?.failed ? ', one failed' : ''}"
-					>{Number(key.slice(8))}{#if dot}<b class="cd" class:err={dot.failed}></b>{/if}</a
+					aria-label={labelFor(key, dot)}
+					><span class="cn">{Number(key.slice(8))}</span>{#if dot}<b
+							class="cd"
+							class:err={dot.failed}
+						></b>{/if}</a
 				>
 			{/if}
 		{/each}

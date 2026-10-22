@@ -39,8 +39,6 @@
 	const waiting = $derived(
 		!!ring.rotatedAt && (!ring.last || new Date(ring.rotatedAt) > new Date(ring.last.at))
 	);
-	// The URL breaks only after a slash, never inside a word
-	const urlParts = $derived(ring.webhookUrl.split(/(?<=\/)/));
 	const submit = $derived(sectionSubmit(dirty, 'ring', { result: () => {} }));
 </script>
 
@@ -63,9 +61,7 @@
 	<div class="f">
 		<span class="hk-field-label" id="url-label">Webhook URL</span>
 		<div class="hk-secret" aria-labelledby="url-label">
-			<span class="scroll url"
-				>{#each urlParts as p, i (i)}{p}<wbr />{/each}</span
-			>
+			<span class="scroll url">{ring.webhookUrl}</span>
 			<CopyButton text={ring.webhookUrl} label="Copy" />
 		</div>
 	</div>
@@ -136,7 +132,7 @@
 				<li>
 					<span class="r-t">{when(e.at)}</span>
 					<span class="r-m">{capital(e.reason)}</span>
-					<span class="r-c">{e.status}</span>
+					<span class="obadge err">{e.status}</span>
 					<span class="r-s">{e.bytes ? formatBytes(e.bytes) : ''}</span>
 				</li>
 			{/each}
@@ -164,13 +160,20 @@
 	.small {
 		font-size: 0.875rem;
 	}
+	/* Read-only field: the input's height, surface-2, actions inside on the right */
 	.hk-secret {
-		min-height: 2.75rem;
+		height: 2.25rem;
+		padding: 0 0.25rem 0 0.75rem;
+		gap: 0.25rem;
+	}
+	.hk-secret :global(.hk-btn-ghost) {
+		height: 1.75rem;
+		padding: 0 0.5rem;
 	}
 	/* Copy, Reveal and Rotate inside a field: one bare ghost style */
 	.hk-secret :global(.copy.copy--labelled) {
-		height: 1.875rem;
-		padding: 0 0.625rem;
+		height: 1.75rem;
+		padding: 0 0.5rem;
 		gap: 0.375rem;
 		border-color: transparent;
 		background: transparent;
@@ -187,10 +190,6 @@
 		height: 14px;
 	}
 	.url {
-		white-space: normal;
-		overflow-wrap: normal;
 		word-break: normal;
-		line-height: 1.45;
-		padding-block: 0.5rem;
 	}
 </style>

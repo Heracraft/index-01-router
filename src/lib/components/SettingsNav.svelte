@@ -13,6 +13,8 @@
 	}
 	let { items, current }: Props = $props();
 	const settings = resolve('/(app)/settings');
+	/** Phone tabs: short enough for one row at 360px */
+	const SHORT: Record<string, string> = { note: 'Note', transcription: 'Transcribe' };
 </script>
 
 <aside class="rail">
@@ -37,11 +39,12 @@
 	</nav>
 </aside>
 
-<!-- Phone: the same sections as a row of chips under the header -->
+<!-- Phone: the same sections as underline tabs under the header -->
 <nav class="snav-m" aria-label="Settings sections">
 	{#each items as s (s.id)}
 		<a href="{settings}#{s.id}" class:cur={current === s.id}
-			>{s.label}{#if s.tone}<span class="sdot {s.tone}" aria-hidden="true"></span>{/if}</a
+			>{SHORT[s.id] ?? s.label}{#if s.tone}<span class="sdot {s.tone}" aria-hidden="true"
+				></span>{/if}</a
 		>
 	{/each}
 	<a href={resolve('/(app)/settings/requests')} class:cur={current === 'requests'}>Requests</a>

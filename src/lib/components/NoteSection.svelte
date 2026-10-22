@@ -28,7 +28,6 @@
 		kind: { kind: string; fields: FieldSpec[] };
 		lastSent: Date | null;
 		lastFailed: { at: Date; error: string | null } | null;
-		deliveryCount: number;
 	}
 	interface Props {
 		note: Note;
@@ -177,22 +176,17 @@
 	}
 	const tokenLabel = (t: string) => t.split(':')[0];
 
-	const deleteLine = $derived(
-		[
-			note.deliveryCount === 1
-				? '1 delivery record goes with it.'
-				: note.deliveryCount > 1
-					? `${note.deliveryCount.toLocaleString('en-US')} delivery records go with it.`
-					: '',
-			'Notes in the vault stay.'
-		]
-			.filter(Boolean)
-			.join(' ')
-	);
 	const showTls = $derived(
 		(values.url?.trim() || note.envValues.url || '').toLowerCase().startsWith('https://')
 	);
 	const formId = $derived(`f-${key}`);
+	let enabled = $state(false);
+	let seenEnabled: boolean | undefined;
+	$effect.pre(() => {
+		if (note.enabled === seenEnabled) return;
+		seenEnabled = note.enabled;
+		enabled = note.enabled;
+	});
 </script>
 
 <section class="sset" id={note.id ? `note-${note.id}` : 'note-new'} aria-labelledby="{key}-h">
@@ -201,19 +195,14 @@
 			{named || isNew ? note.name || 'New daily note' : 'Daily note'}
 		</h2>
 		<span class="sset-a">
-			{#if !isNew}
-				<ConfirmAction
-					action="/settings?/noteDelete"
-					fields={{ id: note.id ?? '' }}
-					label="Remove"
-					title="Remove {named ? note.name : 'daily note'}"
-					confirmLabel="Remove"
-					triggerClass="hk-btn-ghost hk-btn-sm quiet"
-				>
-					<p>{deleteLine}</p>
-				</ConfirmAction>
-			{/if}
-			<Switch name="enabled" form={formId} checked={note.enabled} label="Write to this note" />
+			<label class="sw-l" for="{key}-on">{enabled ? 'On' : 'Off'}</label>
+			<Switch
+				id="{key}-on"
+				name="enabled"
+				form={formId}
+				bind:checked={enabled}
+				label="Write to this note"
+			/>
 		</span>
 	</div>
 
@@ -227,55 +216,6 @@
 	>
 		<input type="hidden" name="id" value={note.id ?? 'new'} />
 		{#if isNew}<input type="hidden" name="kind" value={note.kind.kind} />{/if}
-
-		<article class="sheet sheet--sm preview" aria-label="Preview">
-			<div class="sheet-bar">
-				<span class="path-s">
-					{#if lostKey}
-						<span class="ring-err" aria-hidden="true"></span><span class="bad"
-							>API key unreadable</span
-						>
-					{:else if failing && preview.path}
-						<span class="ring-warn" aria-hidden="true"></span><span class="path"
-							>{preview.path}</span
-						><span class="since">No answer since {whenFact(note.lastFailed!.at)}</span>
-					{:else if preview.path}
-						<Icon name="check" size={14} class="ok-check" /><span class="path"
-							>{preview.path}<span class="path-h">{` › ${valueOf('heading')}`}</span></span
-						>
-					{:else}
-						<span class="ring-err" aria-hidden="true"></span><span class="bad"
-							>{preview.pathError}</span
-						>
-					{/if}
-				</span>
-			</div>
-			<div class="sheet-body">
-				<ul class="notes">
-					{#each preview.blocks as b, i (i)}
-						{#if b.type === 'heading'}
-							{#if b.text.toLowerCase() !== valueOf('heading')
-									.trim()
-									.replace(/^#+\s*/, '')
-									.toLowerCase()}
-								<li><h3 class="nh">{b.text}</h3></li>
-							{/if}
-						{:else}
-							<li class="e e--typed">
-								<span class="e-t">{b.time ?? ''}</span>
-								<div class="e-b"><p class="e-x">{b.text}</p></div>
-							</li>
-						{/if}
-					{/each}
-					{#each preview.entry as b, i (i)}
-						<li class="e">
-							<span class="e-t">{b.time ?? ''}</span>
-							<div class="e-b"><p class="e-x">{b.text}</p></div>
-						</li>
-					{/each}
-				</ul>
-			</div>
-		</article>
 
 		<div class="fgrid">
 			<div class="f">
@@ -326,6 +266,66 @@
 			{#if errorFor('entryTemplate')}<p class="f-err">{errorFor('entryTemplate')}</p>{/if}
 		</div>
 
+		<article class="sheet sheet--sm preview" aria-label="Preview">
+			<div class="sheet-bar">
+				<span class="path-s">
+					{#if lostKey}
+						<span class="ring-err" aria-hidden="true"></span><span class="bad"
+							>API key unreadable</span
+						>
+					{:else if failing && preview.path}
+						<span class="ring-warn" aria-hidden="true"></span><span class="path"
+							>{preview.path}</span
+						><span class="since">No answer since {whenFact(note.lastFailed!.at)}</span>
+					{:else if preview.path}
+						<Icon name="check" size={14} class="ok-check" /><span class="path">{preview.path}</span>
+					{:else}
+						<span class="ring-err" aria-hidden="true"></span><span class="bad"
+							>{preview.pathError}</span
+						>
+					{/if}
+				</span>
+			</div>
+			<div class="sheet-body">
+				<ul class="notes">
+					{#each preview.blocks as b, i (i)}
+						{#if b.type === 'heading'}
+							<li><h3 class="nh">{b.text}</h3></li>
+						{:else}
+							<li class="e e--typed">
+								<span class="e-t">{b.time ?? ''}</span>
+								<div class="e-b"><p class="e-x">{b.text}</p></div>
+							</li>
+						{/if}
+					{/each}
+					{#each preview.entry as b, i (i)}
+						<li class="e">
+							<span class="e-t">{b.time ?? ''}</span>
+							<div class="e-b"><p class="e-x">{b.text}</p></div>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		</article>
+
+		<div class="f">
+			<label class="hk-field-label" for="{key}-new">New note starts with</label>
+			<textarea
+				id="{key}-new"
+				bind:this={areas.newNoteTemplate}
+				name="config.newNoteTemplate"
+				class="hk-textarea hk-mono"
+				rows="3"
+				spellcheck="false"
+				bind:value={values.newNoteTemplate}></textarea>
+			<div class="tokens" aria-label="Insert">
+				{#each fieldOf('newNoteTemplate')?.tokens ?? [] as t (t)}
+					<button type="button" onclick={() => insert('newNoteTemplate', t)}
+						><b>+</b> {tokenLabel(t)}</button
+					>
+				{/each}
+			</div>
+		</div>
 		<fieldset class="f trig">
 			<legend class="hk-field-label">Recordings from</legend>
 			<div class="chips">
@@ -343,6 +343,21 @@
 			</div>
 			{#if errorFor('triggers')}<p class="f-err">{errorFor('triggers')}</p>{/if}
 		</fieldset>
+
+		<div class="fgrid fgrid--one">
+			<div class="f">
+				<label class="hk-field-label" for="{key}-name">Name</label>
+				<input
+					id="{key}-name"
+					name="name"
+					class="hk-input"
+					value={note.name}
+					required
+					aria-invalid={!!errorFor('name') || undefined}
+				/>
+				{#if errorFor('name')}<p class="f-err">{errorFor('name')}</p>{/if}
+			</div>
+		</div>
 
 		<details class="sub-det" open={isNew || !!errorFor('url') || !!errorFor('apiKey') || lostKey}>
 			<summary>
@@ -414,36 +429,6 @@
 					</label>
 					{#if errorFor('insecureTls')}<p class="f-err">{errorFor('insecureTls')}</p>{/if}
 				{/if}
-				<div class="f">
-					<label class="hk-field-label" for="{key}-new">New note starts with</label>
-					<textarea
-						id="{key}-new"
-						bind:this={areas.newNoteTemplate}
-						name="config.newNoteTemplate"
-						class="hk-textarea hk-mono"
-						rows="3"
-						spellcheck="false"
-						bind:value={values.newNoteTemplate}></textarea>
-					<div class="tokens" aria-label="Insert">
-						{#each fieldOf('newNoteTemplate')?.tokens ?? [] as t (t)}
-							<button type="button" onclick={() => insert('newNoteTemplate', t)}
-								><b>+</b> {tokenLabel(t)}</button
-							>
-						{/each}
-					</div>
-				</div>
-				<div class="f">
-					<label class="hk-field-label" for="{key}-name">Name</label>
-					<input
-						id="{key}-name"
-						name="name"
-						class="hk-input"
-						value={note.name}
-						required
-						aria-invalid={!!errorFor('name') || undefined}
-					/>
-					{#if errorFor('name')}<p class="f-err">{errorFor('name')}</p>{/if}
-				</div>
 				<div class="actrow">
 					<button
 						class="hk-btn-secondary hk-btn-sm"
@@ -474,6 +459,19 @@
 		</details>
 	</form>
 	{#if !isNew}
+		<div class="sfoot">
+			<ConfirmAction
+				action="/settings?/noteDelete"
+				fields={{ id: note.id ?? '' }}
+				label="Remove {named ? note.name : 'daily note'}"
+				icon="trash"
+				title="Remove {named ? note.name : 'daily note'}"
+				confirmLabel="Remove"
+				triggerClass="hk-btn-ghost hk-btn-sm quiet-danger"
+			>
+				<p>Notes in the vault stay.</p>
+			</ConfirmAction>
+		</div>
 		<SaveBar {dirty} keys={[key]} />
 	{/if}
 	{#if isNew}
@@ -489,9 +487,6 @@
 </section>
 
 <style>
-	.preview {
-		margin-bottom: 0.25rem;
-	}
 	.preview .notes {
 		margin: 0;
 	}
@@ -545,11 +540,23 @@
 		align-items: center;
 		gap: 0.75rem;
 	}
-	.sset-a :global(.quiet) {
+	.sw-l {
+		font-size: 0.8125rem;
+		color: var(--hk-text-3);
+		cursor: pointer;
+	}
+	.sfoot {
+		margin-top: 1.25rem;
+		margin-left: -0.625rem;
+	}
+	.sfoot :global(.quiet-danger) {
 		color: var(--hk-text-3);
 	}
-	.sset-a :global(.quiet:hover) {
+	.sfoot :global(.quiet-danger:hover) {
 		color: var(--hk-err);
+	}
+	.preview {
+		margin-top: 1.25rem;
 	}
 	.since {
 		flex: none;

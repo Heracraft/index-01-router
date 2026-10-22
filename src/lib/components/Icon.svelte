@@ -1,6 +1,7 @@
 <script lang="ts" module>
 	export type IconName =
 		| 'recordings'
+		| 'trash'
 		| 'integrations'
 		| 'transcription'
 		| 'webhook'
@@ -133,6 +134,10 @@
 		<path d="M3.5 8.5l3 3 6-7" />
 	{:else if name === 'plus'}
 		<path d="M8 3v10M3 8h10" />
+	{:else if name === 'trash'}
+		<path
+			d="M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4 4.25l.6 8.4a1 1 0 0 0 1 .85h4.8a1 1 0 0 0 1-.85l.6-8.4"
+		/>
 	{:else if name === 'eye'}
 		<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" /><circle
 			cx="8"

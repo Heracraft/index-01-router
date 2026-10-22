@@ -3,6 +3,7 @@
 	   body shows real values: what goes, what stays, or the result */
 	import type { Snippet } from 'svelte';
 	import { enhance } from '$app/forms';
+	import Icon, { type IconName } from './Icon.svelte';
 	import Modal from './Modal.svelte';
 
 	interface Props {
@@ -19,6 +20,8 @@
 		confirmClass?: string;
 		disabled?: boolean;
 		size?: 'sm' | 'md' | 'lg';
+		/** Icon before the trigger label */
+		icon?: IconName;
 		children: Snippet;
 	}
 
@@ -32,6 +35,7 @@
 		confirmClass = 'hk-btn-danger solid',
 		disabled = false,
 		size = 'sm',
+		icon,
 		children
 	}: Props = $props();
 
@@ -39,7 +43,9 @@
 	let busy = $state(false);
 </script>
 
-<button type="button" class={triggerClass} {disabled} onclick={() => (open = true)}>{label}</button>
+<button type="button" class={triggerClass} {disabled} onclick={() => (open = true)}
+	>{#if icon}<Icon name={icon} size={14} />{/if}{label}</button
+>
 
 <Modal bind:open {title} {size}>
 	{@render children()}

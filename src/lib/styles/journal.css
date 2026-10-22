@@ -16,10 +16,14 @@
 	position: sticky;
 	top: 0;
 	z-index: 20;
-	border-bottom: 1px solid var(--hk-hairline);
-	background: color-mix(in srgb, var(--hk-bg) 88%, transparent);
-	backdrop-filter: saturate(1.4) blur(10px);
+	border-bottom: 1px solid transparent;
+	background: var(--hk-bg);
 	padding-top: env(safe-area-inset-top, 0px);
+	transition: border-color var(--hk-dur-fast) var(--hk-ease);
+}
+/* The rule shows only once the page moves under the bar */
+.hk .top.scrolled {
+	border-bottom-color: var(--hk-hairline);
 }
 .hk .top-in {
 	max-width: var(--page-max);
@@ -135,7 +139,7 @@
 .hk .cal-grid > span,
 .hk .cal-grid > a {
 	position: relative;
-	height: 1.875rem;
+	height: 2rem;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -153,15 +157,29 @@
 }
 .hk .cal-grid > .future {
 	color: var(--hk-text-4);
+	opacity: 0.7;
 }
-.hk .cal-grid > a.sel {
-	background: var(--hk-surface-2);
-	box-shadow: inset 0 0 0 1px var(--hk-border);
-	color: var(--hk-accent);
+/* The day on screen: an outline. Today: a filled accent disc, on every page */
+.hk .cal-grid > a.sel:not(.today) {
+	box-shadow: inset 0 0 0 1px var(--hk-border-strong);
+	background: var(--hk-surface);
+}
+.hk .cal-grid .cn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.375rem;
+	height: 1.375rem;
+	border-radius: 99px;
+}
+.hk .cal-grid > a.today .cn {
+	background: var(--hk-accent);
+	color: var(--hk-surface);
+	font-weight: 600;
 }
 .hk .cd {
 	position: absolute;
-	bottom: 3px;
+	bottom: 0;
 	left: 50%;
 	width: 4px;
 	height: 4px;
@@ -173,64 +191,53 @@
 	background: var(--hk-err-dot);
 }
 
-.hk .needs {
-	margin-top: 1.75rem;
-	padding-top: 1.25rem;
-	border-top: 1px solid var(--hk-hairline);
-}
-.hk .rail-h {
-	font-family: var(--hk-font-sans);
-	font-size: 0.75rem;
-	font-weight: 500;
-	color: var(--hk-text-3);
-	margin: 0 0 0.5rem;
-}
+/* One row under the calendar: how many recordings never reached a note */
 .hk .need {
-	display: block;
-	padding: 0.4375rem 0.5rem;
-	margin: 0 -0.5rem;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	height: 2.25rem;
+	margin: 1.25rem -0.5rem 0;
+	padding: 0 0.5rem;
 	border-radius: var(--hk-radius-7);
+	font-size: 0.8125rem;
+	color: var(--hk-text);
 	text-decoration: none;
+	font-variant-numeric: tabular-nums;
 }
 .hk .need:hover {
 	background: var(--hk-hover);
 }
-.hk .need.cur {
-	background: var(--hk-surface-2);
-	box-shadow: inset 0 0 0 1px var(--hk-hairline);
-}
-.hk .need-d {
-	display: block;
-	font-size: 0.8125rem;
-	color: var(--hk-text);
-	font-variant-numeric: tabular-nums;
-}
-.hk .need-r {
-	display: block;
-	font-size: 0.8125rem;
-	color: var(--hk-err);
-}
-.hk .need-all {
-	display: inline-block;
-	margin-top: 0.375rem;
-	font-size: 0.8125rem;
+.hk .need .ic {
+	margin-left: auto;
+	color: var(--hk-text-3);
 }
 
-/* day head: the day's name with the day before and after beside it */
-.hk .dayhead {
+/* day head: inside the sheet, the day's name over its note path, the day before and after */
+.hk .sheet-head {
 	display: flex;
 	align-items: center;
 	gap: 0.75rem;
-	margin-bottom: 1.25rem;
+	padding: 1.125rem 1rem 1rem 1.5rem;
+	border-bottom: 1px solid var(--hk-hairline);
+}
+.hk .sh-t {
+	flex: 1;
+	min-width: 0;
 }
 .hk .dh-t {
 	margin: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.hk .sh-t .path {
+	display: block;
+	margin: 0.125rem 0 0;
 }
 .hk .dh-nav {
 	display: flex;
 	gap: 0.125rem;
-	margin-left: auto;
-	margin-right: -0.5rem;
 }
 .hk .dh-nav .iconbtn {
 	color: var(--hk-text-3);
@@ -238,16 +245,11 @@
 .hk .dh-nav .iconbtn:hover {
 	color: var(--hk-text);
 }
-.hk .dh-nav .iconbtn[aria-disabled='true'] {
-	color: var(--hk-text-4);
-	opacity: 0.6;
-}
 .hk :is(.hk-btn-secondary, .hk-btn-ghost, .hk-btn, .hk-btn-danger).hk-btn-sm {
 	gap: 0.375rem;
 }
-.hk .open.dh-open {
+.hk .needline {
 	display: none;
-	margin-left: auto;
 }
 
 /* the sheet: one day's note */
@@ -334,20 +336,23 @@
 	border-radius: var(--hk-radius);
 	align-items: start;
 }
-/* The whole line opens its recording; controls inside stay on top of that link */
-.hk .e > a.e-t::after {
-	content: '';
-	position: absolute;
-	inset: 0;
-	border-radius: inherit;
+/* The whole line opens its recording (a click handler on the row); the fade behind More
+   follows the row's ground */
+.hk .e {
+	--e-bg: var(--hk-bg);
+}
+.hk .sheet .e {
+	--e-bg: var(--hk-surface);
+}
+.hk .e:has(> a.e-t) {
+	cursor: pointer;
 }
 .hk .e:has(> a.e-t):hover {
 	background: var(--hk-hover);
+	--e-bg: color-mix(in srgb, var(--hk-text) 4%, var(--hk-bg));
 }
-.hk .e > .pp,
-.hk .e .e-b :is(button, a, form, mark, .iprog) {
-	position: relative;
-	z-index: 1;
+.hk .sheet .e:has(> a.e-t):hover {
+	--e-bg: color-mix(in srgb, var(--hk-text) 4%, var(--hk-surface));
 }
 .hk .e--flash {
 	animation: hk-flash 2.4s var(--hk-ease);
@@ -395,28 +400,56 @@
 	-webkit-box-orient: vertical;
 	overflow: hidden;
 }
+.hk .e-xw {
+	position: relative;
+	max-width: 62ch;
+}
 .hk .e-more {
 	border: 0;
 	background: none;
 	padding: 0;
 	font: inherit;
-	font-size: 0.8125rem;
-	color: var(--hk-text-3);
+	font-size: 0.875rem;
+	line-height: 1.5rem;
+	color: var(--hk-accent);
 	cursor: pointer;
 }
 .hk .e-more:hover {
-	color: var(--hk-text);
 	text-decoration: underline;
 	text-underline-offset: 3px;
+}
+/* Folded: More sits at the end of the last visible line, over a fade */
+.hk .e-more--end {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	padding-left: 2.5rem;
+	line-height: 1.75rem;
+	font-size: 0.9375rem;
+	background: linear-gradient(to right, transparent, var(--e-bg) 2rem);
+}
+.hk .e-ph {
+	color: var(--hk-text-3);
+}
+.hk .e-ph .hk-skeleton {
+	display: inline-block;
+	width: min(18rem, 70%);
+	height: 0.875rem;
+	vertical-align: -1px;
 }
 .hk .e-meta {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0 0.75rem;
-	margin: 0.125rem 0 0;
+	gap: 0 0.375rem;
+	margin: 0;
 	font-size: 0.8125rem;
-	line-height: 1.5rem;
+	line-height: 1.75rem;
 	color: var(--hk-text-3);
+}
+.hk .e-meta span + span::before {
+	content: '·';
+	margin-right: 0.375rem;
+	color: var(--hk-text-4);
 }
 .hk .e--typed .e-x {
 	color: var(--hk-text);
@@ -493,10 +526,10 @@
 .hk .iwave i {
 	flex: 0 0 2px;
 	border-radius: 1px;
-	background: var(--hk-border-strong);
+	background: var(--hk-text-4);
 }
 .hk .iwave i.on {
-	background: var(--hk-accent);
+	background: var(--hk-text);
 }
 .hk .itime {
 	font-size: 0.75rem;
@@ -600,35 +633,34 @@
 }
 
 /* phone: earlier failures, week strip */
-.hk .week,
-.hk .needbar {
+.hk .week {
 	display: none;
 }
 
 /* recording page */
-.hk .back {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.25rem;
-	margin: 0 0 0.75rem -0.25rem;
-	font-size: 0.875rem;
-	color: var(--hk-text-3);
-	text-decoration: none;
-}
-.hk .back:hover {
-	color: var(--hk-text);
-}
 .hk .rechead {
 	display: flex;
-	align-items: baseline;
-	column-gap: 1rem;
-	row-gap: 0.25rem;
+	align-items: center;
 	flex-wrap: wrap;
-	margin-bottom: 1.25rem;
+	column-gap: 0.25rem;
+	row-gap: 0.125rem;
+	margin: -0.25rem 0 1.25rem -0.625rem;
+}
+.hk .rechead .back {
+	color: var(--hk-text-3);
+}
+.hk .rechead .back:hover {
+	color: var(--hk-text);
 }
 .hk .rechead h1 {
 	margin: 0;
 	font-variant-numeric: tabular-nums;
+	min-width: 0;
+}
+.hk .rechead .rec-m {
+	flex-basis: 100%;
+	margin: 0;
+	padding-left: 0.625rem;
 }
 .hk .rel {
 	font-family: var(--hk-font-display);
@@ -652,8 +684,8 @@
 }
 .hk .transcript p {
 	margin: 0;
-	font-size: 1.1875rem;
-	line-height: 1.7;
+	font-size: 1.0625rem;
+	line-height: 1.6;
 	color: var(--hk-text);
 	text-wrap: pretty;
 	white-space: pre-wrap;
@@ -762,25 +794,28 @@
 	align-items: center;
 	gap: 0.75rem;
 	margin-bottom: 1.25rem;
-	padding: 0.75rem 0.75rem 0.75rem 1rem;
-	border: 1px solid var(--hk-border);
+	padding: 0.625rem 0.625rem 0.625rem 1rem;
+	border: 1px solid color-mix(in srgb, var(--hk-err) 18%, transparent);
 	border-radius: var(--hk-radius-lg);
-	background: var(--hk-surface);
+	background: color-mix(in srgb, var(--hk-err) 6%, var(--hk-surface));
 }
 .hk .issue-t {
 	flex: 1;
 	min-width: 0;
+	margin: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0 0.625rem;
 }
 .hk .issue-c {
-	margin: 0;
 	font-size: 0.9375rem;
 	font-weight: 500;
 	color: var(--hk-err);
 }
 .hk .issue-f {
-	margin: 0;
 	font-size: 0.8125rem;
-	color: var(--hk-text-3);
+	color: var(--hk-text-2);
 	font-variant-numeric: tabular-nums;
 }
 
@@ -823,10 +858,10 @@
 .hk .wave i {
 	flex: 0 0 2px;
 	border-radius: 1px;
-	background: var(--hk-border-strong);
+	background: var(--hk-text-4);
 }
 .hk .wave i.on {
-	background: var(--hk-accent);
+	background: var(--hk-text);
 }
 .hk .wave:focus-visible {
 	outline: 2px solid var(--hk-accent);
@@ -966,10 +1001,10 @@
 .hk .sdot.err {
 	background: var(--hk-err-dot);
 }
+/* Sections part by space alone: a rule here would double the last row's */
 .hk .sset {
-	padding: 2rem 0 0.5rem;
-	margin-top: 1.5rem;
-	border-top: 1px solid var(--hk-hairline);
+	padding: 0 0 0.5rem;
+	margin-top: 3rem;
 	scroll-margin-top: 4.5rem;
 }
 @media (max-width: 899.98px) {
@@ -1032,10 +1067,12 @@
 .hk .f > .hk-field-label {
 	margin: 0;
 }
+/* Inserts: one row that scrolls sideways when narrow */
 .hk .tokens {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 0.25rem 1rem;
+	gap: 0.875rem;
+	overflow-x: auto;
+	scrollbar-width: none;
 }
 .hk .tokens button {
 	white-space: nowrap;
@@ -1196,18 +1233,29 @@
 	flex-wrap: wrap;
 	gap: 0.5rem;
 }
-.hk .lang {
+/* Chips: one shape. Off: outline. On: filled surface-2 with a check. Removable: filled
+   with an x. Add: the off chip with a plus */
+.hk :is(.lang, .tchip) {
 	height: 2rem;
 	display: inline-flex;
 	align-items: center;
 	gap: 0.375rem;
-	padding: 0 0.375rem 0 0.75rem;
+	padding: 0 0.75rem;
 	border-radius: 999px;
-	border: 1px solid var(--hk-border-strong);
+	border: 1px solid var(--hk-border);
 	background: var(--hk-surface);
-	color: var(--hk-text);
+	color: var(--hk-text-2);
+	font: inherit;
 	font-size: 0.8125rem;
-	font-weight: 500;
+	font-weight: 400;
+	line-height: 1;
+	white-space: nowrap;
+}
+.hk .lang {
+	padding: 0 0.3125rem 0 0.75rem;
+	border-color: var(--hk-border-strong);
+	background: var(--hk-surface-2);
+	color: var(--hk-text);
 }
 .hk .lang button {
 	width: 1.375rem;
@@ -1223,22 +1271,22 @@
 	padding: 0;
 }
 .hk .lang button:hover {
-	background: var(--hk-hover);
+	background: var(--hk-active);
 	color: var(--hk-text);
 }
-.hk .lang--add {
+.hk .lang.lang--add {
 	padding: 0 0.75rem 0 0.625rem;
-	border: 1px dashed var(--hk-border-strong);
-	background: transparent;
+	border-color: var(--hk-border);
+	background: var(--hk-surface);
 	color: var(--hk-text-2);
 	cursor: pointer;
-	font: inherit;
-	font-size: 0.8125rem;
-	font-weight: 400;
 }
 .hk .lang--add:hover {
 	color: var(--hk-text);
-	border-color: var(--hk-text-3);
+	border-color: var(--hk-border-strong);
+}
+.hk .lang.lang-in {
+	background: var(--hk-surface);
 }
 .hk .lang-in {
 	height: 2rem;
@@ -1247,17 +1295,13 @@
 	padding: 0 0.875rem;
 }
 .hk .tchip {
-	height: 2rem;
-	display: inline-flex;
-	align-items: center;
-	gap: 0.375rem;
-	padding: 0 0.75rem;
-	border-radius: 999px;
-	border: 1px solid var(--hk-border);
-	color: var(--hk-text-2);
-	font-size: 0.8125rem;
-	cursor: pointer;
 	position: relative;
+	cursor: pointer;
+	padding-left: 0.75rem;
+}
+.hk .tchip:hover {
+	border-color: var(--hk-border-strong);
+	color: var(--hk-text);
 }
 .hk .tchip input {
 	position: absolute;
@@ -1270,9 +1314,10 @@
 	display: none;
 }
 .hk .tchip:has(input:checked) {
-	border-color: var(--hk-text);
+	padding-left: 0.5625rem;
+	border-color: var(--hk-border-strong);
+	background: var(--hk-surface-2);
 	color: var(--hk-text);
-	background: var(--hk-surface);
 }
 .hk .tchip:has(input:checked) .ic {
 	display: block;
@@ -1322,7 +1367,7 @@
 }
 .hk .rej li {
 	display: grid;
-	grid-template-columns: 7rem minmax(0, 1fr) 2.5rem 4rem;
+	grid-template-columns: 7rem minmax(0, 1fr) auto 4rem;
 	gap: 0.75rem;
 	align-items: center;
 	min-height: 2.5rem;
@@ -1346,6 +1391,29 @@
 .hk .r-s {
 	color: var(--hk-text-3);
 	text-align: right;
+}
+/* Outcome badge in request lists */
+.hk .obadge {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	height: 1.25rem;
+	padding: 0 0.375rem;
+	border-radius: var(--hk-radius-sm);
+	background: var(--hk-surface-2);
+	color: var(--hk-text-2);
+	font-size: 0.75rem;
+	font-weight: 500;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+.hk .obadge.err {
+	background: var(--hk-err-wash);
+	color: var(--hk-err);
+}
+.hk .obadge.warn {
+	background: var(--hk-warn-wash);
+	color: var(--hk-warn);
 }
 .hk .tz {
 	display: inline-flex;
@@ -1378,13 +1446,20 @@
 	max-width: none;
 }
 .hk .hk-modal::backdrop {
-	background: color-mix(in srgb, var(--hk-scrim) 55%, transparent);
+	background: light-dark(color-mix(in srgb, var(--hk-scrim) 55%, transparent), rgb(0 0 0 / 0.6));
 	backdrop-filter: none;
+}
+/* Dark: the dialog one step over the page, with a firm edge */
+.hk .hk-modal {
+	background: light-dark(var(--hk-surface), var(--hk-surface-2));
+	box-shadow:
+		0 0 0 1px light-dark(var(--hk-border), var(--hk-border-strong)),
+		0 24px 64px -16px light-dark(rgb(0 0 0 / 0.35), rgb(0 0 0 / 0.6));
 }
 .hk .hk-modal-foot {
 	padding-top: 0;
 	border-top: 0;
-	background: var(--hk-surface);
+	background: inherit;
 }
 .hk .hk-btn-danger.solid {
 	background: #b91c1c;
@@ -1453,9 +1528,21 @@
 }
 .hk .search .hk-input {
 	flex: 1;
-	height: 2.75rem;
-	padding-left: 2.625rem;
-	font-size: 1rem;
+	height: 2.25rem;
+	padding-left: 2.375rem;
+	padding-right: 2.25rem;
+}
+.hk .search > .ic {
+	left: 0.75rem;
+}
+.hk .search .hk-input::-webkit-search-cancel-button {
+	appearance: none;
+	display: none;
+}
+.hk .search .clear {
+	position: absolute;
+	right: 0.25rem;
+	color: var(--hk-text-3);
 }
 /* underline tabs: list filters */
 .hk .tabs {
@@ -1532,33 +1619,32 @@
 	}
 	.hk .snav-m {
 		display: flex;
-		gap: 0.375rem;
+		gap: 1.25rem;
 		position: sticky;
 		top: calc(3.5rem + env(safe-area-inset-top, 0px));
 		z-index: 19;
-		margin: -1.25rem -1rem 1.25rem;
-		padding: 0.625rem 1rem;
+		margin: -1.25rem -1rem 1.5rem;
+		padding: 0 1rem;
 		overflow-x: auto;
 		scrollbar-width: none;
 		border-bottom: 1px solid var(--hk-hairline);
-		background: color-mix(in srgb, var(--hk-bg) 88%, transparent);
-		backdrop-filter: saturate(1.4) blur(10px);
+		background: var(--hk-bg);
+		mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
 	}
 	.hk .snav-m a {
 		flex: none;
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		height: 2rem;
-		padding: 0 0.75rem;
-		border-radius: 999px;
-		border: 1px solid var(--hk-border);
-		font-size: 0.8125rem;
-		color: var(--hk-text-2);
+		height: 2.75rem;
+		border-bottom: 2px solid transparent;
+		margin-bottom: -1px;
+		font-size: 0.875rem;
+		color: var(--hk-text-3);
 		text-decoration: none;
 	}
 	.hk .snav-m a.cur {
-		border-color: var(--hk-text);
+		border-bottom-color: var(--hk-text);
 		color: var(--hk-text);
 	}
 	.hk .snav-m .sdot {
@@ -1574,8 +1660,7 @@
 		position: sticky;
 		top: calc(3.5rem + env(safe-area-inset-top, 0px));
 		z-index: 19;
-		background: color-mix(in srgb, var(--hk-bg) 88%, transparent);
-		backdrop-filter: saturate(1.4) blur(10px);
+		background: var(--hk-bg);
 	}
 	.hk .week .iconbtn {
 		color: var(--hk-text-3);
@@ -1610,42 +1695,58 @@
 	.hk .wd .cd {
 		bottom: 2px;
 	}
-	.hk .wd.sel {
+	.hk .wd.sel:not(.today) {
 		background: var(--hk-surface);
 		box-shadow: inset 0 0 0 1px var(--hk-border);
 	}
 	.hk .wd.sel span {
-		color: var(--hk-accent);
+		color: var(--hk-text);
 	}
-	.hk .needbar {
+	.hk .wd.today span {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.625rem;
+		height: 1.625rem;
+		border-radius: 99px;
+		background: var(--hk-accent);
+		color: var(--hk-surface);
+	}
+	.hk .wd.sel.today span {
+		color: var(--hk-surface);
+	}
+	/* Earlier failures: one thin line over the sheet */
+	.hk .needline {
 		display: flex;
 		align-items: center;
-		gap: 0.625rem;
-		margin-bottom: 1rem;
-		padding: 0 0.75rem;
-		height: 2.75rem;
-		border: 1px solid var(--hk-border);
-		border-radius: var(--hk-radius);
-		background: var(--hk-surface);
+		gap: 0.5rem;
+		height: 2rem;
+		margin: -0.5rem 0 0.5rem;
+		font-size: 0.8125rem;
 		color: var(--hk-text-2);
-		font-size: 0.875rem;
 		text-decoration: none;
+		font-variant-numeric: tabular-nums;
 	}
-	.hk .needbar .ic {
-		margin-left: auto;
+	.hk .needline .ic {
 		color: var(--hk-text-3);
 	}
-	.hk .dayhead {
-		margin-bottom: 1rem;
+	/* The strip moves between days here; the header keeps only the note */
+	.hk .dh-nav {
+		display: none;
+	}
+	.hk .open-l {
+		display: none;
 	}
 	.hk .open.dh-open {
-		display: inline-flex;
+		width: 2.25rem;
+		height: 2.25rem;
+		justify-content: center;
+		margin-right: -0.25rem;
+		border-radius: var(--hk-radius);
 	}
-	.hk .dh-open + .dh-nav {
-		margin-left: 0;
-	}
-	.hk .sheet--day .sheet-bar {
-		display: none;
+	.hk .open.dh-open .ic {
+		width: 1.125rem;
+		height: 1.125rem;
 	}
 }
 @media (max-width: 639.98px) {
@@ -1655,24 +1756,24 @@
 	.hk .sheet-bar {
 		padding: 0 0.75rem 0 1rem;
 	}
-	.hk .path-h {
-		display: none;
-	}
 	.hk .sheet-body,
 	.hk .sheet--sm .sheet-body {
 		padding: 1.125rem 1rem 0.5rem;
 	}
-	/* Phone: the time with its play pill under it in a narrow left column, the words beside */
+	.hk .sheet-head {
+		padding: 0.875rem 0.75rem 0.75rem 1rem;
+	}
+	/* Phone: one meta line, the time left and the play pill right, then the words full width */
 	.hk .e {
-		grid-template-columns: 3.75rem minmax(0, 1fr);
-		grid-template-rows: auto 1fr;
-		grid-template-areas: 't x' 'p x';
-		column-gap: 0.625rem;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas: 't p' 'x x';
+		row-gap: 0.25rem;
 		padding: 0.75rem;
 	}
 	.hk .e > .e-t {
 		grid-area: t;
-		line-height: 1.65rem;
+		align-self: center;
+		line-height: 1.75rem;
 		font-size: 0.8125rem;
 	}
 	.hk .e > .e-b {
@@ -1680,12 +1781,18 @@
 	}
 	.hk .e > .pp {
 		grid-area: p;
-		justify-self: start;
-		margin: 0.125rem 0 0;
+		margin: 0;
 	}
 	.hk .e-x {
 		font-size: 1rem;
-		line-height: 1.65;
+		line-height: 1.5rem;
+		max-width: none;
+	}
+	.hk .e-xw {
+		max-width: none;
+	}
+	.hk .e-more--end {
+		line-height: 1.5rem;
 	}
 	.hk .e-x.clamped {
 		-webkit-line-clamp: 5;
@@ -1699,6 +1806,10 @@
 	}
 	.hk .sheet--sm .e {
 		grid-template-columns: 3.25rem minmax(0, 1fr);
+		grid-template-areas: none;
+	}
+	.hk .sheet--sm .e > :is(.e-t, .e-b) {
+		grid-area: auto;
 	}
 	.hk .pp {
 		height: 1.75rem;
@@ -1711,20 +1822,17 @@
 		line-height: 1.875rem;
 	}
 	.hk .transcript p {
-		font-size: 1.0625rem;
-		line-height: 1.75;
+		font-size: 1rem;
+		line-height: 1.6;
 	}
 	.hk .player {
 		gap: 0.625rem;
-	}
-	.hk .ptime .dur {
-		display: none;
 	}
 	.hk .fgrid {
 		grid-template-columns: minmax(0, 1fr);
 	}
 	.hk .rej li {
-		grid-template-columns: 5.5rem minmax(0, 1fr) 2.25rem;
+		grid-template-columns: 5.5rem minmax(0, 1fr) auto;
 	}
 	.hk .r-s {
 		display: none;

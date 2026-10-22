@@ -4,7 +4,6 @@ import { TZ } from '$app/env/private';
 import { db } from '#lib/server/db/index.ts';
 import { recordings } from '#lib/server/db/schema.ts';
 import {
-	deliveryCount,
 	envFor,
 	kinds,
 	listIntegrationsForUI,
@@ -63,11 +62,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		rows
 			.filter((r) => Object.hasOwn(kinds, r.kind))
 			.map(async (r) => {
-				const [sent, last, count] = await Promise.all([
-					lastSent(r.id),
-					lastDelivery(r.id),
-					deliveryCount(r.id)
-				]);
+				const [sent, last] = await Promise.all([lastSent(r.id), lastDelivery(r.id)]);
 				return {
 					id: r.id,
 					name: r.name,
@@ -80,8 +75,7 @@ export const load: PageServerLoad = async ({ url }) => {
 					envValues: r.envValues,
 					kind: kindMeta(r.kind as Kind),
 					lastSent: sent,
-					lastFailed: last?.status === 'failed' ? { at: last.at, error: last.error } : null,
-					deliveryCount: count
+					lastFailed: last?.status === 'failed' ? { at: last.at, error: last.error } : null
 				};
 			})
 	);

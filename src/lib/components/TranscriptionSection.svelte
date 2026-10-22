@@ -314,16 +314,19 @@
 				{:else if ready === 'missing'}
 					<span class="from"><span class="dot warn" aria-hidden="true"></span>No key</span>
 				{/if}
-				<button
-					type="button"
-					class="hk-btn-secondary hk-btn-sm"
-					aria-expanded={open}
-					onclick={() => (open = !open)}>{open ? 'Done' : 'Change'}</button
-				>
+				{#if !open}
+					<button
+						type="button"
+						class="hk-btn-secondary hk-btn-sm"
+						aria-expanded={open}
+						aria-controls="prov"
+						onclick={() => (open = true)}>Change</button
+					>
+				{/if}
 			</span>
 		</div>
 
-		<div class="prov" hidden={!open}>
+		<div class="prov" id="prov" hidden={!open}>
 			<fieldset class="f">
 				<legend class="hk-field-label">Provider</legend>
 				<div class="providers">
@@ -360,8 +363,7 @@
 							id="openai-model"
 							name="openai.model"
 							class="hk-input hk-mono"
-							value={s.openai.model}
-							placeholder={t.providers.find((p) => p.id === 'openai')?.defaultModel}
+							value={s.openai.model || modelOf('openai')}
 							spellcheck="false"
 							aria-invalid={!!errors['openai.model'] || undefined}
 							aria-describedby={described('openai.model')}
@@ -406,8 +408,7 @@
 							id="audio-model"
 							name="openaiAudio.model"
 							class="hk-input hk-mono"
-							value={s.openaiAudio.model}
-							placeholder={t.providers.find((p) => p.id === 'openai-audio')?.defaultModel}
+							value={s.openaiAudio.model || modelOf('openai-audio')}
 							spellcheck="false"
 							aria-invalid={!!errors['openaiAudio.model'] || undefined}
 							aria-describedby={described('openaiAudio.model')}
@@ -462,6 +463,9 @@
 						</TestResult>
 					{/if}
 				</span>
+				<button type="button" class="hk-btn-ghost hk-btn-sm done" onclick={() => (open = false)}
+					>Done</button
+				>
 			</div>
 		</div>
 
@@ -490,9 +494,29 @@
 		padding: 0;
 		margin-bottom: 0.375rem;
 	}
+	/* Provider: plain radio rows, the picked one in ink */
 	.providers {
 		display: grid;
-		gap: 0.5rem;
+		gap: 0;
+		margin-inline: -0.75rem;
+	}
+	.providers .hk-option {
+		min-height: 2.5rem;
+		padding: 0 0.75rem;
+		border: 0;
+		font-size: 0.875rem;
+		color: var(--hk-text-2);
+	}
+	.providers .hk-option:hover {
+		background: var(--hk-hover);
+	}
+	.providers .hk-option:has(input:checked) {
+		background: none;
+		font-weight: 500;
+		color: var(--hk-text);
+	}
+	.done {
+		margin-left: auto;
 	}
 	.opt {
 		display: flex;

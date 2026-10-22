@@ -113,7 +113,6 @@
 							secretsLost: {},
 							lastSent: null,
 							lastFailed: null,
-							deliveryCount: 0,
 							...data.newNote
 						}}
 						triggers={data.triggers}

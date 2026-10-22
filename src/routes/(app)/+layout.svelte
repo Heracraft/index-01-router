@@ -123,6 +123,7 @@
 		queueMicrotask(() => uploadForm?.requestSubmit());
 	}
 
+	let scrollY = $state(0);
 	const onSettings = $derived(page.url.pathname.startsWith('/settings'));
 	const onSearch = $derived(page.url.pathname === '/recordings');
 </script>
@@ -131,9 +132,11 @@
 	<title>Index 01</title>
 </svelte:head>
 
+<svelte:window bind:scrollY />
+
 <a class="hk-skip" href="#main">Skip to content</a>
 
-<header class="top">
+<header class="top" class:scrolled={scrollY > 0}>
 	<div class="top-in">
 		<a class="brand" href={resolve('/(app)')}>
 			<BrandMark />
@@ -186,6 +189,7 @@
 					type="file"
 					name="audio"
 					accept="audio/*,.m4a,.opus"
+					aria-label="Audio file"
 					tabindex="-1"
 					aria-hidden="true"
 					onchange={picked}

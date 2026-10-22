@@ -29,15 +29,18 @@
 		{ id: 'general', label: 'General' }
 	];
 	const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-	/** Nothing for the usual outcome, the reason otherwise */
-	const resultOf = (e: (typeof data.events)[number]) =>
-		e.test
-			? 'Test event'
-			: e.reason === 'stored'
-				? ''
-				: e.reason === 'stored transcription'
-					? 'Transcript only'
-					: capital(e.reason);
+	/** A badge for anything but the usual outcome, and the reason for a rejection */
+	const outcomeOf = (e: (typeof data.events)[number]) => {
+		if (e.status >= 300)
+			return { badge: `Rejected ${e.status}`, tone: 'err', note: capital(e.reason) };
+		if (e.test) return { badge: 'Test', tone: '', note: '' };
+		if (e.reason === 'duplicate') return { badge: 'Duplicate', tone: '', note: '' };
+		if (e.reason === 'stored transcription')
+			return { badge: 'Transcript only', tone: '', note: '' };
+		if (!e.signed) return { badge: 'Unsigned', tone: 'warn', note: '' };
+		if (e.reason !== 'stored') return { badge: '', tone: '', note: capital(e.reason) };
+		return null;
+	};
 </script>
 
 <svelte:head><title>Requests · Index 01</title></svelte:head>
@@ -45,7 +48,7 @@
 <div class="shell">
 	<SettingsNav items={nav} current="requests" />
 	<main id="main" class="col" tabindex="-1">
-		<h1 class="hk-h1-app page-h">Requests</h1>
+		<h1 class="hk-sr">Requests</h1>
 		<nav class="tabs" aria-label="Show">
 			<a
 				href={resolve('/(app)/settings/requests')}
@@ -66,11 +69,9 @@
 		{#each groups as g (g.key)}
 			<section class="grp">
 				<h2 class="grp-h">{g.label}</h2>
-				<ul class="rej log">
+				<ul class="log">
 					{#each g.rows as e (e.id)}
-						{@const bad = e.status >= 300}
-						{@const trig = e.trigger ? triggerLabel(e.trigger) : ''}
-						{@const res = resultOf(e) || (e.signed || e.test ? '' : 'Unsigned')}
+						{@const out = outcomeOf(e)}
 						<li class:link={!!e.recordingId}>
 							{#if e.recordingId}
 								<a class="r-t" href={resolve('/(app)/recordings/[id]', { id: e.recordingId })}
@@ -79,12 +80,11 @@
 							{:else}
 								<span class="r-t">{formatTime(e.at, tz, true)}</span>
 							{/if}
-							<span class="what">
-								<!-- A rejected request has no trigger: its reason takes that column -->
-								<span class="r-g" class:bad={!trig && bad}>{trig || res}</span>
-								{#if trig && res !== trig}<span class="r-m" class:bad>{res}</span>{/if}
+							<span class="r-g">{e.trigger && !e.test ? triggerLabel(e.trigger) : ''}</span>
+							<span class="r-o" title={out?.note || undefined}>
+								{#if out?.badge}<span class="obadge {out.tone}">{out.badge}</span>{/if}
+								{#if out?.note}<span class="r-m">{out.note}</span>{/if}
 							</span>
-							<span class="r-c">{e.status === 200 ? '' : e.status}</span>
 							<span class="r-s">{e.bytes ? formatBytes(e.bytes) : ''}</span>
 						</li>
 					{/each}
@@ -95,29 +95,53 @@
 </div>
 
 <style>
-	.page-h {
-		margin: 0 0 1rem;
+	.log {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		font-size: 0.8125rem;
 	}
-	.bad,
-	.r-g.bad {
-		color: var(--hk-err);
+	.log li {
+		display: grid;
+		grid-template-columns: 4.75rem 7rem minmax(0, 1fr) 4rem;
+		gap: 0.75rem;
+		align-items: center;
+		min-height: 2.5rem;
+		border-bottom: 1px solid var(--hk-hairline);
+		font-variant-numeric: tabular-nums;
 	}
-	.what {
-		display: flex;
-		gap: 0 0.75rem;
-		min-width: 0;
+	.log li:last-child {
+		border-bottom: 0;
+	}
+	.r-t {
+		color: var(--hk-text-3);
 	}
 	.r-g {
-		flex: none;
-		min-width: 6.5rem;
 		color: var(--hk-text-2);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.r-o {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
 	}
 	.r-m {
 		min-width: 0;
 		color: var(--hk-text-3);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.r-s {
+		color: var(--hk-text-3);
+		text-align: right;
 	}
 	.link {
 		position: relative;
+		cursor: pointer;
 	}
 	a.r-t {
 		text-decoration: none;
@@ -130,18 +154,13 @@
 	.link:hover {
 		background: var(--hk-hover);
 	}
-	.log :global(li) {
-		grid-template-columns: 4.75rem minmax(0, 1fr) 2.5rem 4rem;
-	}
 	@media (max-width: 639.98px) {
-		.log :global(li) {
-			grid-template-columns: 4.25rem minmax(0, 1fr) 2.25rem;
+		.log li {
+			grid-template-columns: 4.25rem 5.75rem minmax(0, 1fr);
+			gap: 0.5rem;
 		}
-		.what {
-			flex-wrap: wrap;
-		}
-		.r-g {
-			width: auto;
+		.r-s {
+			display: none;
 		}
 	}
 </style>

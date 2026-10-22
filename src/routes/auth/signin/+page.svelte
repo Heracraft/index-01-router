@@ -10,8 +10,10 @@
 	const switching = $derived(error?.code === 'denied' || error?.code === 'unverified');
 	const label = $derived(!error ? 'Sign in' : switching ? 'Use another account' : 'Try again');
 	let busy = $state(false);
-	// The ring's waveform as the page's one picture
+	// The ring's waveform as the page's one picture: one bar shape throughout, the last few in
+	// the accent the way the mark colours its last bar
 	const bars = seededBars('index-01', 36);
+	const TAIL = 4;
 </script>
 
 <svelte:head>
@@ -25,7 +27,9 @@
 			<span class="wordmark">Index 01</span>
 		</p>
 		<div class="sigwave" aria-hidden="true">
-			{#each bars as h, i (i)}<i style:height="{Math.round(h * h * 100)}%" class:on={i >= 30}
+			{#each bars as h, i (i)}<i
+					style:height="{Math.round(h * 100)}%"
+					class:on={i >= bars.length - TAIL}
 				></i>{/each}
 		</div>
 		{#if error}

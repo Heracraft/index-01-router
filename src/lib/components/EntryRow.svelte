@@ -57,6 +57,15 @@
 		return { destroy: () => ro.disconnect() };
 	}
 
+	/** A tap anywhere on the row that is not a control, and not a text selection, opens it */
+	function openRow(e: MouseEvent) {
+		const t = e.target as HTMLElement;
+		if (t.closest('a, button, form, input, label, .iprog, dialog')) return;
+		if (window.getSelection()?.toString()) return;
+		if (e.metaKey || e.ctrlKey) window.open(href, '_blank');
+		else goto(href);
+	}
+
 	const parts = (text: string) => {
 		const q = mark.trim();
 		if (!q) return [{ t: text, m: false }];
@@ -77,14 +86,20 @@
 </script>
 
 {#snippet text(t: string)}
-	<p class="e-x" class:clamped={!open && !hit} use:clamp>
-		{#each parts(t) as p, i (i)}{#if p.m}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
-	</p>
-	{#if !hit && (over || open)}
-		<button type="button" class="e-more" onclick={() => (open = !open)}
-			>{open ? 'Less' : 'More'}</button
-		>
-	{/if}
+	<div class="e-xw">
+		<p class="e-x" class:clamped={!open && !hit} use:clamp>
+			{#each parts(t) as p, i (i)}{#if p.m}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
+		</p>
+		{#if !hit && (over || open)}
+			<button
+				type="button"
+				class="e-more"
+				class:e-more--end={!open}
+				aria-expanded={open}
+				onclick={() => (open = !open)}>{open ? 'Less' : 'More'}</button
+			>
+		{/if}
+	</div>
 {/snippet}
 
 {#snippet progress()}
@@ -96,19 +111,35 @@
 	{/if}
 {/snippet}
 
+{#snippet metaLine()}
+	{#if meta.length}<p class="e-meta">
+			{#each meta as m (m)}<span>{m}</span>{/each}
+		</p>{/if}
+{/snippet}
+
+<!-- The row opens its recording: the time is the link, a tap on the words does the same -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <li
 	class="e"
 	class:e--fail={st.kind === 'failed'}
 	class:e--muted={st.kind === 'sending' || st.kind === 'nospeech'}
 	data-id={rec.id}
 	use:flash
+	onclick={openRow}
 >
 	<a class="e-t" {href}>{time}</a>
 	<div class="e-b">
+		{#if rec.transcript?.trim()}
+			{@render text(rec.transcript)}
+		{:else if st.kind === 'waiting' || st.kind === 'transcribing'}
+			<p class="e-x e-ph" aria-hidden="true"><span class="hk-skeleton"></span></p>
+		{:else if st.kind === 'nospeech'}
+			<p class="e-x e-ph">No speech</p>
+		{:else}
+			<p class="e-x e-ph">No transcript</p>
+		{/if}
+
 		{#if st.kind === 'failed'}
-			{#if rec.transcript?.trim()}
-				{@render text(rec.transcript)}
-			{/if}
 			<div class="e-s e-s--err">
 				<span class="fdot" aria-hidden="true"></span>
 				<span class="fail-c">{st.cause}</span>
@@ -116,6 +147,7 @@
 					<ConfirmAction
 						action="{href}?/delete"
 						label="Delete"
+						icon="trash"
 						title="Delete the {time} recording"
 						triggerClass="hk-btn-ghost hk-btn-sm e-act"
 					>
@@ -159,30 +191,16 @@
 				{/if}
 			</div>
 			{#if retryError}<p class="e-s e-s--err" role="alert">{retryError}</p>{/if}
-			{@render progress()}
 		{:else if st.kind === 'waiting'}
 			<p class="e-s"><span class="idle" aria-hidden="true"></span>Waiting</p>
-			{@render progress()}
 		{:else if st.kind === 'transcribing'}
 			<p class="e-s"><span class="spin" aria-hidden="true"></span>Transcribing</p>
-			{@render progress()}
 		{:else if st.kind === 'sending'}
-			{@render text(rec.transcript ?? '')}
 			<p class="e-s"><span class="spin" aria-hidden="true"></span>Sending to the note</p>
-			{@render progress()}
-		{:else if st.kind === 'nospeech'}
-			<p class="e-x">No speech</p>
-			{#if meta.length}<p class="e-meta">
-					{#each meta as m (m)}<span>{m}</span>{/each}
-				</p>{/if}
-			{@render progress()}
 		{:else}
-			{@render text(rec.transcript ?? '')}
-			{#if meta.length}<p class="e-meta">
-					{#each meta as m (m)}<span>{m}</span>{/each}
-				</p>{/if}
-			{@render progress()}
+			{@render metaLine()}
 		{/if}
+		{@render progress()}
 	</div>
 	{#if rec.hasAudio && rec.durationMs != null}
 		<PlayPill id={rec.id} durationMs={rec.durationMs} />
