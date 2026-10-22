@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { refreshAll } from '$app/navigation';
 	import Icon, { type IconName } from '#lib/components/Icon.svelte';
+	import Signal from '#lib/components/Signal.svelte';
 	import ThemeToggle from '#lib/components/ThemeToggle.svelte';
 	import { live } from '#lib/components/live.svelte.ts';
 	import type { LayoutProps } from './$types';
@@ -128,7 +129,6 @@
 		};
 	});
 
-	const year = new Date().getFullYear();
 	let account = $state<HTMLDetailsElement>();
 </script>
 
@@ -149,16 +149,12 @@
 				<span class="sub">Router</span>
 			</a>
 			<details class="account" bind:this={account}>
-				<summary>
+				<summary title={data.user.email ?? data.user.name ?? undefined}>
 					<span class="who">{data.user.email ?? data.user.name ?? 'Signed in'}</span>
 					<Icon name="chevron" />
 				</summary>
 				<div class="menu">
-					{#if data.user.email || data.user.name}
-						<p class="menu-who">{data.user.email ?? data.user.name}</p>
-					{/if}
 					<div class="menu-theme">
-						<span class="hk-label">Theme</span>
 						<ThemeToggle />
 					</div>
 					<form method="POST" action="/auth/signout">
@@ -189,48 +185,58 @@
 				{/each}
 			</ul>
 			<div class="rail-foot">
-				<p class="hk-label">Provider</p>
-				<p class="rail-value">{data.provider.label}</p>
-				{#if data.provider.model}<p class="rail-model hk-mono">{data.provider.model}</p>{/if}
+				<a class="rail-provider" href={resolve('/(app)/transcription')}>
+					<p class="hk-label">Provider</p>
+					<p class="rail-value">{data.provider.label}</p>
+					{#if data.provider.model || data.provider.ready}
+						<p class="rail-model">
+							{#if data.provider.ready === 'ok'}
+								<Signal tone="ok" label="Key set" hideLabel />
+							{:else if data.provider.ready === 'lost'}
+								<Signal tone="err" label="Key unreadable" hideLabel />
+							{:else if data.provider.ready === 'missing'}
+								<Signal tone="idle" label="No key" hideLabel />
+							{/if}
+							<span class="hk-mono">{data.provider.model}</span>
+						</p>
+					{/if}
+				</a>
 				<p class="hk-label rail-tz-label">Timezone</p>
 				<p class="rail-tz">{data.timezone.replaceAll('_', ' ')}</p>
 			</div>
 		</nav>
 
 		<main id="main" tabindex="-1">
-			{#if data.lostKeys.length}
-				<p class="hk-banner" role="alert">
-					AUTH_SECRET changed, so the stored {data.lostKeys.join(' and ')} could not be read.
-					<a href={resolve('/(app)/transcription')}>
-						Enter {data.lostKeys.length > 1 ? 'them' : 'it'} again
-					</a>
-				</p>
-			{/if}
-			{#if data.lostIntegrations.length}
-				<p class="hk-banner" role="alert">
-					AUTH_SECRET changed, so the stored API key of
-					{#each data.lostIntegrations as it, i (it.id)}{i ? ', ' : ''}<a
-							href={resolve('/(app)/integrations/[id]', { id: it.id })}>{it.name}</a
-						>{/each}
-					could not be read. Deliveries there fail until you enter it again.
-				</p>
-			{/if}
-			{#if data.webhookSecretReset}
-				<p class="hk-banner" role="alert">
-					AUTH_SECRET changed, so the webhook signing secret was replaced.
-					<a href={resolve('/(app)/webhook')}>Paste the new one into the Index 01 app</a>
-				</p>
+			{#if data.lostKeys.length || data.lostIntegrations.length || data.webhookSecretReset}
+				<div class="hk-banner secret-banner" role="alert">
+					<p class="banner-head">AUTH_SECRET changed</p>
+					<ul>
+						{#each data.lostKeys as k (k.label)}
+							<li>
+								<span>{k.label}</span>
+								<a href="{resolve('/(app)/transcription')}{k.field ? `#${k.field}` : ''}"
+									>Enter again</a
+								>
+							</li>
+						{/each}
+						{#each data.lostIntegrations as it (it.id)}
+							<li>
+								<span>{it.name} API key</span>
+								<a href={resolve('/(app)/integrations/[id]', { id: it.id })}>Enter again</a>
+							</li>
+						{/each}
+						{#if data.webhookSecretReset}
+							<li>
+								<span>Webhook signing secret replaced</span>
+								<a href={resolve('/(app)/webhook')}>Show</a>
+							</li>
+						{/if}
+					</ul>
+				</div>
 			{/if}
 			{@render children()}
 		</main>
 	</div>
-
-	<footer class="foot">
-		<div class="hk-container foot-in">
-			<span>© {year} Index 01 Router</span>
-			<a href={resolve('/healthz')} data-sveltekit-reload>Health check</a>
-		</div>
-	</footer>
 </div>
 
 <style>
@@ -332,18 +338,9 @@
 		background: var(--hk-surface);
 		box-shadow: var(--hk-shadow-pop);
 	}
-	.menu-who {
-		margin: 0;
-		padding: 0.5rem 0.5rem 0.625rem;
-		font-size: 0.8125rem;
-		color: var(--hk-text);
-		overflow-wrap: anywhere;
-		border-bottom: 1px solid var(--hk-hairline);
-	}
 	.menu-theme {
 		display: flex;
 		flex-direction: column;
-		gap: 0.375rem;
 		padding: 0.625rem 0.5rem;
 		border-bottom: 1px solid var(--hk-hairline);
 	}
@@ -414,7 +411,7 @@
 	.rail ul::-webkit-scrollbar {
 		display: none;
 	}
-	.rail a {
+	.rail ul a {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -429,19 +426,19 @@
 			color var(--hk-dur-fast) var(--hk-ease),
 			background-color var(--hk-dur-fast) var(--hk-ease);
 	}
-	.rail a:hover {
+	.rail ul a:hover {
 		color: var(--hk-text);
 		background: var(--hk-hover);
 	}
-	.rail a.on {
+	.rail ul a.on {
 		color: var(--hk-text);
 		background: var(--hk-surface-2);
 		box-shadow: inset 0 0 0 1px var(--hk-hairline);
 	}
-	.rail a :global(svg) {
+	.rail ul a :global(svg) {
 		color: var(--hk-text-3);
 	}
-	.rail a.on :global(svg) {
+	.rail ul a.on :global(svg) {
 		color: var(--hk-accent);
 	}
 	.rail-foot {
@@ -451,15 +448,48 @@
 		min-width: 0;
 		padding-top: 1.75rem;
 	}
+	.secret-banner {
+		display: block;
+	}
+	.secret-banner p,
+	.secret-banner ul {
+		margin: 0;
+	}
+	.banner-head {
+		font-weight: 500;
+	}
+	.secret-banner ul {
+		list-style: none;
+		padding: 0;
+		margin-top: 0.375rem;
+	}
+	.secret-banner li {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		padding-block: 0.125rem;
+	}
+	.rail-provider {
+		display: block;
+		margin: -0.375rem -0.5rem;
+		padding: 0.375rem 0.5rem;
+		border-radius: var(--hk-radius-7);
+		color: inherit;
+		text-decoration: none;
+		transition: background-color var(--hk-dur-fast) var(--hk-ease);
+	}
+	.rail-provider:hover {
+		background: var(--hk-hover);
+	}
 
 	@media (max-width: 479.98px) {
 		.rail ul {
 			gap: 0;
 		}
-		.rail a {
+		.rail ul a {
 			padding: 0 0.5rem;
 		}
-		.rail a :global(svg) {
+		.rail ul a :global(svg) {
 			display: none;
 		}
 	}
@@ -502,6 +532,11 @@
 			line-height: 1.75rem;
 			color: var(--hk-text);
 		}
+		.rail-model {
+			display: flex;
+			align-items: center;
+			gap: 0.375rem;
+		}
 		.rail-model,
 		.rail-tz {
 			font-size: 0.75rem;
@@ -517,24 +552,5 @@
 		main {
 			padding-top: 2.25rem;
 		}
-	}
-
-	.foot {
-		border-top: 1px solid var(--hk-hairline);
-	}
-	.foot-in {
-		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
-		padding-block: 1.5rem;
-		font-size: 0.8125rem;
-		color: var(--hk-text-3);
-	}
-	.foot-in a {
-		color: inherit;
-		text-decoration: none;
-	}
-	.foot-in a:hover {
-		color: var(--hk-text);
 	}
 </style>

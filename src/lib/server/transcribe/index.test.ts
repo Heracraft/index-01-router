@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_RATE } from './chunk.ts';
-import {
-	MAX_AUDIO_SECONDS,
-	PROVIDERS,
-	testTranscription,
-	transcribe,
-	type TranscribeDeps
-} from './index.ts';
+import { MAX_AUDIO_SECONDS, PROVIDERS, transcribe, type TranscribeDeps } from './index.ts';
 import type { TranscriptionSettings, UploadFormat } from './types.ts';
 
 function settings(over: Partial<TranscriptionSettings> = {}): TranscriptionSettings {
@@ -269,17 +263,9 @@ describe('transcribe', () => {
 	});
 });
 
-describe('PROVIDERS and testTranscription', () => {
+describe('PROVIDERS', () => {
 	it('lists the four providers', () => {
 		expect(PROVIDERS.map((p) => p.id)).toEqual(['openai', 'openai-audio', 'gemini', 'whisper-cpp']);
 		expect(PROVIDERS[0]!.defaultModel).toBe('gpt-transcribe');
-	});
-
-	it('dispatches the probe', async () => {
-		const { f, calls } = fakeFetch([new Response(JSON.stringify({ id: 'gpt-audio' }))]);
-		expect(await testTranscription(settings({ provider: 'openai-audio' }), { fetch: f })).toBe(
-			'gpt-audio available'
-		);
-		expect(calls[0]!.url).toBe('https://api.openai.com/v1/models/gpt-audio');
 	});
 });

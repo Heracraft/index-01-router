@@ -4,13 +4,10 @@
 
 	let { data }: PageProps = $props();
 
-	const ERRORS: Record<string, string> = {
-		denied: 'This account is not on the allow list. Sign in with an allowed account.',
-		unverified: 'The identity provider has not verified this email. Verify it, then sign in again.',
-		exchange: 'The identity provider rejected the sign-in. Try again.',
-		idp: 'Could not reach the identity provider. Try again in a moment.'
-	};
-	const error = $derived(data.error ? (ERRORS[data.error] ?? 'Sign-in failed. Try again.') : null);
+	const error = $derived(data.error);
+	// Denied and unverified need another account; the rest a second go
+	const switching = $derived(error?.code === 'denied' || error?.code === 'unverified');
+	const label = $derived(!error ? 'Sign in' : switching ? 'Use another account' : 'Try again');
 	let busy = $state(false);
 </script>
 
@@ -27,13 +24,29 @@
 			<span class="sub">Router</span>
 		</p>
 		{#if error}
-			<p class="hk-banner hk-banner--err" role="alert">{error}</p>
+			<p class="hk-banner hk-banner--err" role="alert">
+				{#if error.code === 'denied'}
+					{#if error.email}<span><code>{error.email}</code> is not on the allow list.</span
+						>{:else}This account is not on the allow list.{/if}
+				{:else if error.code === 'unverified'}
+					{#if error.email}<span
+							><code>{error.email}</code> is not verified at the identity provider.</span
+						>{:else}This email is not verified at the identity provider.{/if}
+				{:else if error.code === 'exchange'}
+					The identity provider rejected the sign-in.
+				{:else if error.code === 'idp'}
+					{#if error.host}<span>Cannot reach <code>{error.host}</code>.</span>{:else}Cannot reach
+						the identity provider.{/if}
+				{:else}
+					<span>Sign-in failed: <code>{error.code}</code></span>
+				{/if}
+			</p>
 		{/if}
 		<form method="POST" onsubmit={() => (busy = true)}>
-			{#if data.error === 'denied' || data.error === 'unverified'}
+			{#if switching}
 				<input type="hidden" name="switch" value="1" />
 			{/if}
-			<button class="hk-btn hk-btn-lg" aria-busy={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+			<button class="hk-btn hk-btn-lg" aria-busy={busy}>{busy ? 'Signing in…' : label}</button>
 		</form>
 	</div>
 </main>
@@ -81,8 +94,14 @@
 		color: var(--hk-text-3);
 	}
 	.hk-banner {
+		display: block;
 		width: 100%;
 		margin-bottom: 1rem;
+		overflow-wrap: anywhere;
+	}
+	code {
+		font-family: var(--hk-font-mono);
+		font-size: 0.8125rem;
 	}
 	form,
 	button {

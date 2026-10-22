@@ -285,21 +285,25 @@ describe.skipIf(!url || !vault)('obsidian live', () => {
 		expect(e.message).toContain('ECONNREFUSED');
 	});
 
-	it('reports a test summary', async () => {
-		const line = await obsidian.test(config());
-		expect(line).toMatch(/^Connected, \d+ tools, \d+ entr(y|ies) at the vault root$/);
+	it('reports the note a delivery today would write to', async () => {
+		const r = await obsidian.test(config(), { timeZone: 'UTC' });
+		expect(r.target).toMatch(/\.md$/);
+		expect(['heading', 'note', 'new']).toContain(r.state);
 	});
 
 	it.skipIf(!httpsUrl)('talks to a self-signed HTTPS server with insecure TLS', async () => {
-		expect(await obsidian.test(config({ url: httpsUrl, insecureTls: true }))).toMatch(/^Connected/);
+		expect(
+			await obsidian.test(config({ url: httpsUrl, insecureTls: true }), { timeZone: 'UTC' })
+		).toHaveProperty('target');
 		await deliver(
 			{ recordedAt: at('2026-10-28', '07:00'), transcript: 'Over TLS' },
 			{ url: httpsUrl, insecureTls: true }
 		);
 		expect(await read(daily('2026-10-28'))).toContain('- 07:00 Over TLS');
-		const e = await obsidian.test(config({ url: httpsUrl, insecureTls: false })).catch((e) => e);
-		expect(e).toMatchObject({ retryable: false });
-		expect(e.message).toContain('insecure TLS');
+		const e = await obsidian
+			.test(config({ url: httpsUrl, insecureTls: false }), { timeZone: 'UTC' })
+			.catch((e) => e);
+		expect(e).toMatchObject({ retryable: false, field: 'insecureTls' });
 	});
 });
 

@@ -1,8 +1,10 @@
 <script lang="ts">
-	/* A stored secret never reaches the browser. Saved shows as a state with Replace; a blank
-	   submit keeps the stored value. `env` names the variable used while nothing is stored;
-	   a stored value overrides it. */
+	/* A stored secret never reaches the browser. Each state shows where the value comes from:
+	   Stored, From VAR, Unreadable, or the input. A blank submit keeps the stored value. `env`
+	   names the variable used while nothing is stored; a stored value overrides it. Remove
+	   previews the state the field will have after save */
 	import Icon from './Icon.svelte';
+	import Signal from './Signal.svelte';
 
 	interface Props {
 		id: string;
@@ -10,9 +12,13 @@
 		label: string;
 		/** A value is stored */
 		set: boolean;
+		/** The stored value no key in AUTH_SECRET opens */
+		lost?: boolean;
 		/** Env variable used when nothing is stored */
 		env?: string | null;
 		invalid?: boolean;
+		/** id of the field error under it */
+		describedby?: string;
 		/** Posted as `<name>.clear=1` when Remove is pressed */
 		clearable?: boolean;
 		placeholder?: string;
@@ -22,10 +28,12 @@
 		name,
 		label,
 		set,
+		lost = false,
 		env = null,
 		invalid = false,
+		describedby,
 		clearable = false,
-		placeholder = ''
+		placeholder = 'Not set'
 	}: Props = $props();
 
 	let replacing = $state(false);
@@ -41,6 +49,10 @@
 		}
 		lastSet = set;
 	});
+	// A field marked invalid opens the input, so the error sits under something to fix
+	$effect.pre(() => {
+		if (invalid && !set) replacing = true;
+	});
 
 	async function replace() {
 		replacing = true;
@@ -51,7 +63,12 @@
 
 <div>
 	<label class="hk-field-label" for={id}>{label}</label>
-	{#if env && !set && !replacing}
+	{#if lost && !replacing}
+		<div class="state" aria-describedby={describedby}>
+			<span class="grow" {id}><Signal tone="err" label="Unreadable" /></span>
+			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={replace}>Replace</button>
+		</div>
+	{:else if env && !set && !replacing}
 		<div class="state">
 			<Icon name="lock" />
 			<span class="grow" {id}>From <span class="hk-mono">{env}</span></span>
@@ -59,9 +76,9 @@
 		</div>
 	{:else if set && !replacing && !cleared}
 		<div class="state">
-			<span class="hk-dot hk-dot--ok" aria-hidden="true"></span>
 			<span class="grow" {id}>
-				{#if env}Saved, overrides <span class="hk-mono">{env}</span>{:else}Saved{/if}
+				<Signal tone="ok" label="Stored" />
+				{#if env}<s class="hk-mono over" title="{env} not used">{env}</s>{/if}
 			</span>
 			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={replace}>Replace</button>
 			{#if clearable}
@@ -73,9 +90,13 @@
 	{:else if cleared}
 		<input type="hidden" name="{name}.clear" value="1" />
 		<div class="state">
-			<span class="grow">
-				{#if env}Removed on save, falls back to <span class="hk-mono">{env}</span>{:else}Removed on
-					save{/if}
+			<span class="after grow" {id}>
+				{#if env}
+					<Icon name="lock" />
+					<span>From <span class="hk-mono">{env}</span></span>
+				{:else}
+					<Signal tone="idle" label="Not set" />
+				{/if}
 			</span>
 			<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (cleared = false)}
 				>Undo</button
@@ -92,9 +113,10 @@
 				autocomplete="off"
 				spellcheck="false"
 				aria-invalid={invalid || undefined}
+				aria-describedby={describedby}
 				{placeholder}
 			/>
-			{#if replacing}
+			{#if replacing && (set || env || lost)}
 				<button type="button" class="hk-btn-ghost hk-btn-sm" onclick={() => (replacing = false)}
 					>Cancel</button
 				>
@@ -120,11 +142,21 @@
 		color: var(--hk-text-3);
 	}
 	.grow {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.after {
+		opacity: 0.55;
+	}
+	.over {
+		font-size: 0.8125rem;
+		color: var(--hk-text-3);
 	}
 	.row {
 		display: flex;

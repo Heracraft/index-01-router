@@ -158,6 +158,10 @@ describe('safeNext', () => {
 	});
 });
 
+/** Payload of the signed sign-in error cookie */
+const errorOf = (cookie: string) =>
+	JSON.parse(Buffer.from(cookie.split('.')[0]!, 'base64url').toString()) as object;
+
 describe('callback without the IdP', () => {
 	it('sends a stale callback back to sign-in before discovery', async () => {
 		env.OIDC_ISSUER = 'http://127.0.0.1:9/down';
@@ -198,7 +202,7 @@ describe.skipIf(!issuer)('callback against the mock IdP', () => {
 		const u = new URL(location);
 		expect(u.searchParams.get('id_token_hint')).toBeTruthy();
 		expect(u.searchParams.get('post_logout_redirect_uri')).toBe('http://app.test/auth/signin');
-		expect(jar.signin_error).toBe('denied');
+		expect(errorOf(jar.signin_error)).toEqual({ code: 'denied' });
 		expect(jar.session).toBeUndefined();
 	});
 
@@ -208,7 +212,7 @@ describe.skipIf(!issuer)('callback against the mock IdP', () => {
 			email_verified: false
 		});
 		expect(new URL(location).pathname).toBe('/default/endsession');
-		expect(jar.signin_error).toBe('unverified');
+		expect(errorOf(jar.signin_error)).toEqual({ code: 'unverified', email: 'me@example.com' });
 		expect(jar.session).toBeUndefined();
 	});
 

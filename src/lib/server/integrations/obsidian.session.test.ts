@@ -138,7 +138,12 @@ describe('MCP sessions', () => {
 	});
 
 	it('ends the session of a connection test with one DELETE', async () => {
-		expect(await obsidian.test({ url, apiKey: 'k' })).toMatch(/^Connected, 5 tools/);
+		expect(
+			await obsidian.test(
+				{ url, apiKey: 'k' },
+				{ timeZone: 'UTC', now: new Date('2026-10-22T09:00:00Z') }
+			)
+		).toEqual({ target: '2026-10-22.md', state: 'new', heading: 'Notes' });
 		expect(sessions.size).toBe(0);
 		expect(deletes).toHaveLength(1);
 		expect(deletes[0]).toBeTruthy();

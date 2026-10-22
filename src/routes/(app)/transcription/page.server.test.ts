@@ -10,7 +10,10 @@ vi.mock('#lib/server/transcribe/index.ts', () => ({
 		{ id: 'gemini', label: 'Gemini', defaultModel: 'gemini-default' },
 		{ id: 'whisper-cpp', label: 'whisper.cpp', defaultModel: '' }
 	],
-	testTranscription: async () => 'ok'
+	CHUNK_SECONDS: 30
+}));
+vi.mock('#lib/server/transcribe/probe.ts', () => ({
+	probeTranscription: async () => ({ ms: 1, text: 'ok', languages: [] })
 }));
 vi.mock('#lib/server/settings.ts', () => {
 	const transcription = () => ({
@@ -26,6 +29,13 @@ vi.mock('#lib/server/settings.ts', () => {
 	return {
 		envLocks: { webhookSecret: false, openaiKey: true, geminiKey: false },
 		withEnvKeys: (t: unknown) => t,
+		keyReadiness: () => ({}),
+		getStoredWithStatus: async (key: string) => ({
+			value: structuredClone(
+				store.values.get(key) ?? (key === 'transcription' ? transcription() : {})
+			),
+			lost: []
+		}),
 		getStored: async (key: string) =>
 			structuredClone(store.values.get(key) ?? (key === 'transcription' ? transcription() : {})),
 		setStored: async (key: string, value: unknown) => void store.values.set(key, value)

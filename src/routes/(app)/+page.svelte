@@ -1,14 +1,19 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
+	import CopyButton from '#lib/components/CopyButton.svelte';
+	import FilterTabs from '#lib/components/FilterTabs.svelte';
 	import PageHead from '#lib/components/PageHead.svelte';
+	import Signal from '#lib/components/Signal.svelte';
 	import StatusDot from '#lib/components/StatusDot.svelte';
 	import Trigger from '#lib/components/Trigger.svelte';
+	import WeekBars from '#lib/components/WeekBars.svelte';
 	import { live } from '#lib/components/live.svelte.ts';
+	import { cleanError, describeRecording } from '#lib/recording-state.ts';
 	import {
 		dayKey,
 		dayLabel,
-		formatDateTime,
 		formatDuration,
 		formatNumber,
 		formatTime,
@@ -25,6 +30,12 @@
 		{ value: 'failed', label: 'Failed' },
 		{ value: 'done', label: 'Done' }
 	] as const;
+	const tabs = $derived([
+		{ value: 'all', label: 'All', count: data.stats.total },
+		{ value: 'pending', label: 'Pending', count: data.stats.pending },
+		{ value: 'failed', label: 'Failed', count: data.stats.failed, tone: 'err' as const },
+		{ value: 'done', label: 'Done', count: data.stats.done }
+	]);
 	const filterQuery = (value: string) => (value === 'all' ? '' : `?status=${value}`);
 	const olderQuery = $derived(
 		data.nextCursor
@@ -51,6 +62,23 @@
 		return out;
 	});
 
+	// A live refresh marks rows that are new or changed status for a moment
+	let seen: Map<string, string> | null = null;
+	let changed = $state(new Set<string>());
+	let clearTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const now = new Map(data.recordings.map((r) => [r.id, r.status]));
+		const prev = seen;
+		seen = now;
+		if (!prev) return;
+		const hits = [...now].filter(([id, status]) => prev.get(id) !== status).map(([id]) => id);
+		if (!hits.length) return;
+		changed = new Set(hits);
+		clearTimeout(clearTimer);
+		clearTimer = setTimeout(() => (changed = new Set()), 1200);
+	});
+	$effect(() => () => clearTimeout(clearTimer));
+
 	let fileInput = $state<HTMLInputElement>();
 	let uploadForm = $state<HTMLFormElement>();
 	let uploading = $state(false);
@@ -63,14 +91,18 @@
 		// Wait a tick so the hidden lastModified input carries the new value
 		queueMicrotask(() => uploadForm?.requestSubmit());
 	}
+
+	const failedLabel = (targets: string[]) =>
+		targets[0] + (targets.length > 1 ? ` +${targets.length - 1}` : '');
 </script>
 
 <PageHead title="Recordings">
 	{#snippet sub()}
-		<span class="live" class:on={live.connected}>
-			<span class="hk-dot" class:hk-dot--live={live.connected} aria-hidden="true"></span>
-			{live.connected ? 'Live' : 'Offline'}
-		</span>
+		{#if live.connected}
+			<Signal tone="live" label="Live" hideLabel title="Live" />
+		{:else}
+			<Signal tone="idle" label="Offline" />
+		{/if}
 	{/snippet}
 	{#snippet actions()}
 		<form
@@ -80,8 +112,12 @@
 			enctype="multipart/form-data"
 			use:enhance={() => {
 				uploading = true;
-				return async ({ update }) => {
-					await update();
+				return async ({ update, result }) => {
+					if (result.type === 'success' && typeof result.data?.uploaded === 'string') {
+						await goto(resolve('/(app)/recordings/[id]', { id: result.data.uploaded }));
+					} else {
+						await update();
+					}
 					uploading = false;
 				};
 			}}
@@ -113,7 +149,7 @@
 	<p class="hk-banner hk-banner--err" role="alert">{form.upload}</p>
 {/if}
 
-<div class="hk-stats">
+<div class="hk-stats stats">
 	<div class="hk-stat">
 		<div class="hk-stat-label">Today</div>
 		<div class="hk-stat-value hk-num">{formatNumber(data.stats.today)}</div>
@@ -121,40 +157,18 @@
 	<div class="hk-stat">
 		<div class="hk-stat-label">This week</div>
 		<div class="hk-stat-value hk-num">{formatNumber(data.stats.week)}</div>
-	</div>
-	<div class="hk-stat">
-		<div class="hk-stat-label">Pending</div>
-		<div class="hk-stat-value hk-num">{formatNumber(data.stats.pending)}</div>
-	</div>
-	<div class="hk-stat">
-		<div class="hk-stat-label">Failed</div>
-		<div class="hk-stat-value hk-num" class:err={data.stats.failed > 0}>
-			{#if data.stats.failed > 0}
-				<a href="{resolve('/(app)')}?status=failed">{formatNumber(data.stats.failed)}</a>
-			{:else}
-				0
-			{/if}
-		</div>
+		<WeekBars days={data.weekDays} />
 	</div>
 </div>
 
 <section class="list">
 	<div class="bar">
-		<nav class="hk-seg hk-seg--sm" aria-label="Filter by status">
-			{#each FILTERS as f (f.value)}
-				<a
-					href="{resolve('/(app)')}{filterQuery(f.value)}"
-					class:on={data.filter === f.value}
-					aria-current={data.filter === f.value ? 'page' : undefined}
-					data-sveltekit-reset="false"
-					data-sveltekit-replacestate>{f.label}</a
-				>
-			{/each}
-		</nav>
-		<span class="caption hk-num">
-			{formatNumber(data.matching)}
-			{data.matching === 1 ? 'recording' : 'recordings'}
-		</span>
+		<FilterTabs
+			label="Filter by status"
+			items={tabs}
+			current={data.filter}
+			href={(v) => `${resolve('/(app)')}${filterQuery(v)}`}
+		/>
 	</div>
 
 	{#if data.recordings.length === 0}
@@ -164,12 +178,16 @@
 				<a class="hk-link" href="{resolve('/(app)')}{filterQuery(data.filter)}">Newest</a>
 			{:else if data.filter === 'all'}
 				<span>No recordings yet.</span>
-				<a class="hk-link" href={resolve('/(app)/webhook')}>Webhook URL</a>
+				{#if data.webhookUrl}
+					<span class="first">
+						<span class="hk-mono url">{data.webhookUrl}</span>
+						<CopyButton text={data.webhookUrl} label="Copy" />
+					</span>
+				{/if}
 			{:else}
 				<span
 					>No {FILTERS.find((f) => f.value === data.filter)?.label.toLowerCase()} recordings.</span
 				>
-				<a class="hk-link" href={resolve('/(app)')}>All recordings</a>
 			{/if}
 		</div>
 	{:else}
@@ -177,17 +195,28 @@
 			<h2 class="day">{g.label}</h2>
 			<ul class="rows">
 				{#each g.rows as r (r.id)}
+					{@const st = describeRecording(r)}
 					<li>
-						<a class="rec" href={resolve('/(app)/recordings/[id]', { id: r.id })}>
+						<a
+							class="rec"
+							class:changed={changed.has(r.id)}
+							href={resolve('/(app)/recordings/[id]', { id: r.id })}
+						>
 							<span class="time hk-num">{formatTime(r.recordedAt, tz)}</span>
-							<span class="trig"><Trigger trigger={r.trigger} /></span>
-							<span class="text" class:muted={!r.line && r.status !== 'failed'}>
-								{#if r.status === 'failed' && !r.line}
-									<span class="err-text">{r.error ?? 'Failed'}</span>
-								{:else if r.line}
+							<span class="trig"><Trigger trigger={r.trigger} compact /></span>
+							<span class="text">
+								{#if st.slot.kind === 'text'}
 									{r.line}
+								{:else if st.slot.kind === 'error'}
+									<span class="err-text">{st.slot.text}</span>
+								{:else if st.slot.kind === 'no-speech'}
+									<span class="muted">No speech</span>
 								{:else}
-									<StatusDot status={r.status} />
+									<StatusDot
+										status={r.status}
+										attempt={r.attempts}
+										lastError={st.retry?.lastError}
+									/>
 								{/if}
 							</span>
 							<span class="langs">
@@ -197,12 +226,22 @@
 							</span>
 							<span class="dur hk-num">{formatDuration(r.durationMs)}</span>
 							<span class="state">
-								{#if r.status === 'failed' && r.line}
+								{#if r.failedTargets.length}
+									<Signal
+										tone="err"
+										label={failedLabel(r.failedTargets)}
+										title={r.failedError ? cleanError(r.failedError) : null}
+									/>
+								{:else if r.status === 'failed' && st.slot.kind === 'text'}
 									<StatusDot status="failed" />
-								{:else if r.failedDeliveries > 0}
-									<span class="hk-badge hk-badge--err">{r.failedDeliveries} failed</span>
-								{:else if r.line && r.status !== 'done'}
-									<StatusDot status={r.status} />
+								{:else if st.slot.kind === 'text' && r.status !== 'done' && r.status !== 'failed'}
+									<StatusDot
+										status={r.status}
+										attempt={r.status === 'routing' ? r.deliveryAttempt : r.attempts}
+										lastError={r.status === 'routing'
+											? r.deliveryError && cleanError(r.deliveryError)
+											: st.retry?.lastError}
+									/>
 								{/if}
 							</span>
 						</a>
@@ -219,31 +258,29 @@
 				{#if data.nextCursor}
 					<a class="hk-btn-secondary" href="{resolve('/(app)')}{olderQuery}">Older</a>
 				{/if}
-				{#if data.before}
-					<span class="caption hk-num">
-						Older than {formatDateTime(data.before, tz)}
-					</span>
-				{/if}
 			</nav>
 		{/if}
 	{/if}
 </section>
 
 <style>
-	.live {
+	/* Two stats at every width */
+	.hk-stats.stats {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.first {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.375rem;
+		gap: 0.5rem;
+		min-width: 0;
 	}
-	.err a,
-	.err {
-		color: var(--hk-err);
+	.url {
+		font-size: 0.8125rem;
+		color: var(--hk-text-2);
+		overflow-wrap: anywhere;
 	}
-	.err a {
-		text-decoration: none;
-	}
-	.err a:hover {
-		text-decoration: underline;
+	.muted {
+		color: var(--hk-text-3);
 	}
 
 	.list {
@@ -256,34 +293,6 @@
 		flex-wrap: wrap;
 		gap: 0.75rem 1rem;
 		margin-bottom: 1rem;
-	}
-	.hk-seg a {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		height: 1.5rem;
-		padding: 0 0.625rem;
-		border-radius: var(--hk-radius-6);
-		font-size: 0.75rem;
-		font-weight: 500;
-		color: var(--hk-text-3);
-		text-decoration: none;
-		white-space: nowrap;
-		transition: color var(--hk-dur-fast) var(--hk-ease);
-	}
-	.hk-seg a:hover,
-	.hk-seg a.on {
-		color: var(--hk-text);
-	}
-	.hk-seg a.on {
-		background: var(--hk-surface);
-		box-shadow:
-			0 0 0 1px var(--hk-border),
-			0 1px 2px rgb(0 0 0 / 0.06);
-	}
-	.caption {
-		font-size: 0.8125rem;
-		color: var(--hk-text-3);
 	}
 
 	.day {
@@ -315,8 +324,14 @@
 		font-size: 0.875rem;
 		transition: background-color var(--hk-dur-fast) var(--hk-ease);
 	}
-	.rec:hover {
+	.rec:hover,
+	.rec.changed {
 		background: var(--hk-hover);
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.rec {
+			transition: background-color var(--hk-dur-meter) var(--hk-ease);
+		}
 	}
 	/* Phone: transcript on top, meta under it */
 	.text {
@@ -327,9 +342,6 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
-	}
-	.text.muted {
-		color: var(--hk-text-3);
 	}
 	.err-text {
 		color: var(--hk-err);
@@ -349,13 +361,6 @@
 		grid-row: 2;
 		grid-column: 2;
 		display: inline-flex;
-	}
-	.trig :global(.trigger > span) {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
 	}
 	.dur {
 		grid-row: 2;
@@ -379,7 +384,7 @@
 
 	@media (min-width: 640px) {
 		.rec {
-			grid-template-columns: 3rem 7.25rem minmax(0, 1fr) auto 3.25rem 6.5rem;
+			grid-template-columns: 3rem 1.25rem minmax(0, 1fr) auto 3.25rem minmax(6.5rem, auto);
 			align-items: center;
 			gap: 0 1rem;
 			padding: 0.75rem 0.5rem;
@@ -394,12 +399,6 @@
 		.state {
 			grid-row: auto;
 			grid-column: auto;
-		}
-		.trig :global(.trigger > span) {
-			position: static;
-			width: auto;
-			height: auto;
-			clip: auto;
 		}
 		.text {
 			display: block;

@@ -1,6 +1,6 @@
 <script lang="ts">
-	/* A button that asks once in a modal, then posts `action`. One sentence names the target and
-	   the consequence; the danger button repeats the verb. */
+	/* A button that asks once in a modal, then posts `action`. The title names the target; the
+	   body shows real values: what goes, what stays, or the result */
 	import type { Snippet } from 'svelte';
 	import { enhance } from '$app/forms';
 	import Modal from './Modal.svelte';
@@ -18,6 +18,7 @@
 		/** Class of the confirm button in the modal */
 		confirmClass?: string;
 		disabled?: boolean;
+		size?: 'sm' | 'md' | 'lg';
 		children: Snippet;
 	}
 
@@ -30,6 +31,7 @@
 		triggerClass = 'hk-btn-danger',
 		confirmClass = 'hk-btn-danger',
 		disabled = false,
+		size = 'sm',
 		children
 	}: Props = $props();
 
@@ -39,7 +41,7 @@
 
 <button type="button" class={triggerClass} {disabled} onclick={() => (open = true)}>{label}</button>
 
-<Modal bind:open {title} size="sm">
+<Modal bind:open {title} {size}>
 	{@render children()}
 	{#snippet footer()}
 		<button type="button" class="hk-btn-ghost" onclick={() => (open = false)}>Cancel</button>

@@ -1,6 +1,6 @@
 // Audio piped into an LLM: POST {base}/chat/completions with an input_audio part (gpt-audio).
 // input_audio takes wav or mp3 only. The model is told to transcribe verbatim and reply JSON.
-import { bearer, probeModel, requireKey, send, trimUrl } from './openai.ts';
+import { bearer, requireKey, send, trimUrl } from './openai.ts';
 import { llmInstructions, llmUserText, parseLlmTranscript } from './prompt.ts';
 import {
 	TranscribeError,
@@ -75,10 +75,5 @@ export const openaiAudio: Provider = {
 			body: () => payload
 		});
 		return parseChatReply(body, new URL(base).host);
-	},
-
-	test(settings, ctx) {
-		const s = settings.openaiAudio;
-		return probeModel(s.baseUrl, s.apiKey, this.model(settings), ctx);
 	}
 };

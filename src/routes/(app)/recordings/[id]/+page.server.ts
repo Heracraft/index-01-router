@@ -4,6 +4,14 @@ import { db } from '#lib/server/db/index.ts';
 import { deliveries, integrations, recordings, webhookEvents } from '#lib/server/db/schema.ts';
 import { deleteRecording } from '#lib/server/ingest.ts';
 import { redeliver, retryRecording } from '#lib/server/pipeline.ts';
+import {
+	integrationMatches,
+	listIntegrationsForUI,
+	skipReason
+} from '#lib/server/integrations/index.ts';
+import { obsidianConfig } from '#lib/server/integrations/obsidian.ts';
+import { getSettings } from '#lib/server/settings.ts';
+import { renderEntry } from '#lib/notes/template.ts';
 import { parseLanguages } from '#lib/format.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -14,7 +22,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	const [rec] = await db.select().from(recordings).where(eq(recordings.id, params.id));
 	if (!rec) error(404, 'Recording not found');
 
-	const [rows, [event]] = await Promise.all([
+	const [rows, [event], all, general] = await Promise.all([
 		db
 			.select({
 				id: deliveries.id,
@@ -26,7 +34,8 @@ export const load: PageServerLoad = async ({ params }) => {
 				updatedAt: deliveries.updatedAt,
 				integrationId: integrations.id,
 				name: integrations.name,
-				kind: integrations.kind
+				kind: integrations.kind,
+				config: integrations.config
 			})
 			.from(deliveries)
 			.innerJoin(integrations, eq(deliveries.integrationId, integrations.id))
@@ -37,8 +46,26 @@ export const load: PageServerLoad = async ({ params }) => {
 			.from(webhookEvents)
 			.where(eq(webhookEvents.recordingId, rec.id))
 			.orderBy(asc(webhookEvents.at))
-			.limit(1)
+			.limit(1),
+		listIntegrationsForUI(),
+		getSettings('general')
 	]);
+
+	// The entry a resend of the current transcript would append, rendered as delivery would
+	const entryFor = (config: Record<string, unknown>) => {
+		try {
+			return renderEntry(obsidianConfig(config).entryTemplate, {
+				recordedAt: rec.recordedAt,
+				timeZone: general.timezone || 'UTC',
+				transcript: rec.transcript ?? '',
+				languages: parseLanguages(rec.languages),
+				trigger: rec.trigger,
+				durationMs: rec.durationMs
+			});
+		} catch {
+			return rec.transcript ?? '';
+		}
+	};
 
 	const appTranscript = rec.appTranscript?.trim() || null;
 	return {
@@ -66,11 +93,18 @@ export const load: PageServerLoad = async ({ params }) => {
 				appTranscript && appTranscript !== rec.transcript?.trim() ? appTranscript : null
 		},
 		userAgent: event?.userAgent ?? null,
+		// Enabled integrations that take this recording's trigger
+		matching: all
+			.filter((i) => integrationMatches(i, rec.trigger))
+			.map(({ id, name }) => ({ id, name })),
 		// Stale: sent before the transcript last changed
-		deliveries: rows.map(({ sentVersion, ...d }) => ({
-			...d,
-			stale: d.status === 'sent' && sentVersion < rec.transcriptVersion
-		}))
+		deliveries: rows.map(({ sentVersion, config, ...d }) => {
+			const stale = d.status === 'sent' && sentVersion < rec.transcriptVersion;
+			// Read from the integration as it is now, so older rows show the same short reason
+			const error =
+				d.status === 'skipped' ? skipReason(all.find((i) => i.id === d.integrationId)) : d.error;
+			return { ...d, error, stale, preview: stale ? entryFor(config) : null };
+		})
 	};
 };
 

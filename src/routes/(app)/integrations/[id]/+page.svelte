@@ -4,8 +4,11 @@
 	import type { SubmitFunction } from '$app/forms';
 	import ConfirmAction from '#lib/components/ConfirmAction.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import NotePreview from '#lib/components/NotePreview.svelte';
 	import PageHead from '#lib/components/PageHead.svelte';
 	import SecretField from '#lib/components/SecretField.svelte';
+	import TestResult from '#lib/components/TestResult.svelte';
+	import { renderEntry, renderNotePath, renderTemplate } from '#lib/notes/template.ts';
 	import { triggerLabel } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
@@ -17,22 +20,132 @@
 	const q = $derived(isNew ? `?kind=${encodeURIComponent(data.kind.kind)}&` : '?');
 	const allTriggers = $derived(it.triggers.length === 0);
 
-	// Labels named in a save error ("API key required") mark their field
-	const saveError = $derived(form?.action === 'save' && 'error' in form ? form.error : null);
-	const invalid = (label: string) => !!saveError && saveError.includes(label);
+	// Fields the preview and the TLS box follow; reset when the stored values change (a save)
+	const str = (k: string) => (typeof it.config[k] === 'string' ? (it.config[k] as string) : '');
+	let values = $state<Record<string, string>>({});
+	let seen = '';
+	$effect.pre(() => {
+		const key = JSON.stringify(it.config);
+		if (key === seen) return;
+		seen = key;
+		values = Object.fromEntries(
+			data.kind.fields
+				.filter((f) => f.type !== 'boolean' && f.type !== 'secret')
+				.map((f) => [f.key, str(f.key)])
+		);
+	});
+	const showTls = $derived(
+		!data.kind.fields.some((f) => f.key === 'insecureTls') ||
+			(values.url ?? '').trim().toLowerCase().startsWith('https://')
+	);
 
 	let busy = $state<'save' | 'test' | null>(null);
-	let savedAt = $state(0);
+	let saved = $state(false);
+	// Anything typed since the last test or save
+	let stale = $state(false);
 	const submit: SubmitFunction = ({ submitter }) => {
 		busy = submitter?.getAttribute('formaction')?.includes('test') ? 'test' : 'save';
+		saved = false;
 		return async ({ update, result }) => {
 			// A test changes nothing stored; reloading would put the stored values back over your edits
 			await update({ reset: false, refreshAll: busy !== 'test' });
-			if (busy === 'save' && result.type === 'success') savedAt = Date.now();
+			saved = busy === 'save' && result.type === 'success';
+			stale = false;
 			busy = null;
 		};
 	};
+	const touched = () => {
+		stale = true;
+		saved = false;
+	};
+
 	const test = $derived(form?.action === 'test' && 'test' in form ? form.test : null);
+	// The error and the field it names, from the last save or test. A test error goes stale with it
+	const failure = $derived.by(() => {
+		if (!form || busy) return null;
+		if (form.action === 'save' && 'error' in form && form.error)
+			return { error: form.error, field: 'field' in form ? (form.field ?? null) : null };
+		if (form.action === 'test' && test && !test.ok && !stale)
+			return { error: test.message, field: 'field' in form ? (form.field ?? null) : null };
+		return null;
+	});
+	// The TLS box is gone for http URLs, so its errors land on the URL
+	const errField = $derived(
+		failure?.field === 'insecureTls' && !showTls ? 'url' : (failure?.field ?? null)
+	);
+	const errorFor = (key: string) => (errField === key ? failure!.error : null);
+	const looseError = $derived(failure && !errField ? failure.error : null);
+	const errId = (key: string) => `${key}-error`;
+
+	// Note preview: rendered with the same code delivery uses, from the latest transcript
+	const sampleVars = $derived(
+		data.sample
+			? {
+					...data.sample,
+					transcript: data.sample.transcript ?? '',
+					recordedAt: new Date(data.sample.recordedAt)
+				}
+			: {
+					recordedAt: new Date(),
+					transcript: 'Call the landlord about the plumber.',
+					languages: ['en'],
+					trigger: 'single-click-hold',
+					durationMs: 9000
+				}
+	);
+	const hasPreview = $derived(data.kind.kind === 'obsidian');
+	// A blank field saves as its default
+	const valueOf = (key: string) =>
+		values[key]?.trim()
+			? values[key]
+			: String(data.kind.fields.find((f) => f.key === key)?.default ?? '');
+	const preview = $derived.by(() => {
+		const vars = { ...sampleVars, timeZone: data.timezone || 'UTC' };
+		let path: string | null = null;
+		let pathError: string | null = null;
+		try {
+			path = renderNotePath(valueOf('notePath'), vars);
+		} catch (e) {
+			pathError = (e as Error).message;
+		}
+		const heading = valueOf('heading')
+			.trim()
+			.replace(/^#+\s*/, '');
+		let entry = '';
+		let note = '';
+		try {
+			entry = renderEntry(valueOf('entryTemplate'), vars);
+			note = renderTemplate(values.newNoteTemplate ?? '', { ...vars, transcript: '', heading });
+		} catch {
+			// a bad date token: the bar already shows path errors; the body stays as typed
+		}
+		const head = note.replace(/\s+$/, '');
+		const hasHeading = new RegExp(
+			`^#{1,6}\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+			'mi'
+		).test(head);
+		const before = [head, hasHeading ? '' : `${head ? '\n' : ''}## ${heading}`]
+			.filter(Boolean)
+			.join('\n');
+		const start = before ? before.split('\n').length : 0;
+		const body = before ? `${before}\n${entry}` : entry;
+		return {
+			path,
+			pathError,
+			body,
+			entryLines: [start, start + entry.split('\n').length] as [number, number]
+		};
+	});
+
+	// Token chips insert {{token}} at the caret
+	const areas: Record<string, HTMLTextAreaElement> = {};
+	function insert(key: string, token: string) {
+		const el = areas[key];
+		if (!el) return;
+		el.focus();
+		el.setRangeText(`{{${token}}}`, el.selectionStart, el.selectionEnd, 'end');
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+	}
 </script>
 
 <nav class="crumbs" aria-label="Breadcrumb">
@@ -42,16 +155,25 @@
 <PageHead title={isNew ? `New ${data.kind.label} integration` : it.name}>
 	{#snippet actions()}
 		{#if !isNew}
-			<ConfirmAction action="?/delete" label="Delete" title="Delete integration">
+			<ConfirmAction action="?/delete" label="Delete" title="Delete {it.name}">
 				<p>
-					Delete {it.name}? New recordings stop going to it and its delivery history goes too.
+					{#if data.deliveryCount > 0}{data.deliveryCount.toLocaleString('en-US')}
+						{data.deliveryCount === 1 ? 'delivery record goes' : 'delivery records go'} with it.
+					{/if}Notes in the vault stay.
 				</p>
 			</ConfirmAction>
 		{/if}
 	{/snippet}
 </PageHead>
 
-<form method="POST" action="{q}/save" use:enhance={submit} class="hk-fields">
+<form
+	method="POST"
+	action="{q}/save"
+	use:enhance={submit}
+	class="hk-fields"
+	oninput={touched}
+	onchange={touched}
+>
 	<div>
 		<label class="hk-field-label" for="name">Name</label>
 		<input
@@ -60,8 +182,10 @@
 			class="hk-input"
 			defaultValue={it.name}
 			required
-			aria-invalid={invalid('Name') || undefined}
+			aria-invalid={!!errorFor('name') || undefined}
+			aria-describedby={errorFor('name') ? errId('name') : undefined}
 		/>
+		{#if errorFor('name')}<p class="hk-field-error" id={errId('name')}>{errorFor('name')}</p>{/if}
 	</div>
 
 	<label class="hk-check">
@@ -69,12 +193,9 @@
 		Enabled
 	</label>
 
-	<fieldset>
+	<fieldset aria-describedby={errorFor('triggers') ? errId('triggers') : undefined}>
 		<legend class="hk-field-label">Triggers</legend>
-		<div
-			class="chips"
-			aria-invalid={form?.action === 'save' && 'field' in form && form.field === 'triggers'}
-		>
+		<div class="chips" aria-invalid={!!errorFor('triggers')}>
 			{#each data.triggers as t (t)}
 				<label class="hk-chip hk-chip--touch">
 					<input
@@ -87,6 +208,9 @@
 				</label>
 			{/each}
 		</div>
+		{#if errorFor('triggers')}
+			<p class="hk-field-error" id={errId('triggers')}>{errorFor('triggers')}</p>
+		{/if}
 	</fieldset>
 
 	<hr class="hk-rule" />
@@ -94,35 +218,64 @@
 	{#each data.kind.fields as f (f.key)}
 		{@const id = `f-${f.key}`}
 		{@const value = it.config[f.key]}
+		{@const err = errorFor(f.key)}
 		{#if f.type === 'secret'}
-			<SecretField
-				{id}
-				name="config.{f.key}"
-				label={f.label}
-				set={!!it.secretsSet[f.key]}
-				invalid={invalid(f.label)}
-			/>
-		{:else if f.type === 'boolean'}
 			<div>
-				<label class="hk-check">
-					<input type="checkbox" name="config.{f.key}" checked={value === true} />
-					{f.label}
-				</label>
-				{#if f.hint}<p class="hint">{f.hint}</p>{/if}
+				<SecretField
+					{id}
+					name="config.{f.key}"
+					label={f.label}
+					set={!!it.secretsSet[f.key]}
+					lost={!!it.secretsLost[f.key]}
+					invalid={!!err}
+					describedby={err ? errId(f.key) : undefined}
+					placeholder={f.placeholder}
+				/>
+				{#if err}<p class="hk-field-error" id={errId(f.key)}>{err}</p>{/if}
 			</div>
+		{:else if f.type === 'boolean'}
+			{#if f.key !== 'insecureTls' || showTls}
+				<div>
+					<label class="hk-check">
+						<input
+							type="checkbox"
+							name="config.{f.key}"
+							checked={value === true}
+							aria-invalid={!!err || undefined}
+							aria-describedby={err ? errId(f.key) : undefined}
+						/>
+						{f.label}
+					</label>
+					{#if err}<p class="hk-field-error" id={errId(f.key)}>{err}</p>{/if}
+				</div>
+			{/if}
 		{:else}
+			{@const pathBad = f.key === 'notePath' && !!preview.pathError}
 			<div>
 				<label class="hk-field-label" for={id}>{f.label}</label>
 				{#if f.type === 'textarea'}
 					<textarea
 						{id}
+						bind:this={areas[f.key]}
 						name="config.{f.key}"
 						class="hk-textarea hk-mono"
 						rows="3"
 						spellcheck="false"
-						aria-invalid={invalid(f.label) || undefined}
-						>{typeof value === 'string' ? value : ''}</textarea
-					>
+						placeholder={f.placeholder}
+						bind:value={values[f.key]}
+						aria-invalid={!!err || undefined}
+						aria-describedby={err ? errId(f.key) : undefined}></textarea>
+					{#if f.tokens?.length}
+						<div class="tokens">
+							{#each f.tokens as token (token)}
+								<button
+									type="button"
+									class="hk-chip hk-mono token"
+									onclick={() => insert(f.key, token)}>{token}</button
+								>
+							{/each}
+						</div>
+					{/if}
 				{:else}
 					<input
 						{id}
@@ -131,18 +284,31 @@
 						class:hk-mono={f.type === 'url' || f.key.toLowerCase().includes('path')}
 						type={f.type === 'url' ? 'url' : 'text'}
 						spellcheck="false"
-						value={typeof value === 'string' ? value : ''}
-						aria-invalid={invalid(f.label) || undefined}
+						placeholder={f.placeholder}
+						bind:value={values[f.key]}
+						aria-invalid={!!err || pathBad || undefined}
+						aria-describedby={err ? errId(f.key) : pathBad ? 'notepath-preview' : undefined}
 					/>
 				{/if}
-				{#if f.hint}<p class="hint">{f.hint}</p>{/if}
+				{#if err}<p class="hk-field-error" id={errId(f.key)}>{err}</p>{/if}
+				{#if hasPreview && f.key === 'newNoteTemplate'}
+					<div class="preview">
+						<NotePreview
+							path={preview.path}
+							pathError={preview.pathError}
+							barId="notepath-preview"
+							body={preview.body}
+							entryLines={preview.entryLines}
+						/>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	{/each}
 
 	<div class="buttons">
-		<button class="hk-btn" disabled={!!busy} aria-busy={busy === 'save'}>
-			{busy === 'save' ? 'Saving…' : isNew ? 'Create integration' : 'Save'}
+		<button class="hk-btn" aria-busy={busy === 'save'} disabled={busy === 'save'}>
+			{busy === 'save' ? 'Saving…' : isNew ? 'Create integration' : saved ? 'Saved' : 'Save'}
 		</button>
 		<button
 			class="hk-btn-secondary"
@@ -153,17 +319,24 @@
 			{busy === 'test' ? 'Testing…' : 'Test connection'}
 		</button>
 		<span class="result" role="status">
-			{#if busy === null && saveError}
-				<span class="bad">{saveError}</span>
-			{:else if busy === null && test}
-				<span class:ok={test.ok} class:bad={!test.ok}>
-					<span class="hk-dot" class:hk-dot--ok={test.ok} class:hk-dot--err={!test.ok}></span>
-					{test.message}
-				</span>
-			{:else if busy === null && form?.action === 'save' && 'saved' in form && savedAt}
-				<span class="ok">Saved</span>
+			{#if busy === null && looseError}
+				<span class="bad">{looseError}</span>
+			{:else if busy === null && test && (test.ok || !errField)}
+				<TestResult result={test} {stale}>
+					{#if test.ok}
+						<span class="hk-mono">{test.target}</span>
+						<span class="muted"
+							>· {test.state === 'heading'
+								? `## ${test.heading} found`
+								: test.state === 'note'
+									? `no ## ${test.heading} yet`
+									: 'new note'}</span
+						>
+					{/if}
+				</TestResult>
 			{/if}
 		</span>
+		<span class="hk-sr" aria-live="polite">{saved ? 'Saved' : ''}</span>
 	</div>
 </form>
 
@@ -195,9 +368,21 @@
 		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
-	.hint {
-		margin: 0.375rem 0 0;
-		font-size: 0.75rem;
+	.tokens {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.375rem;
+		margin-top: 0.5rem;
+	}
+	.token {
+		height: 1.5rem;
+		font-size: 0.6875rem;
+		font-weight: 400;
+	}
+	.preview {
+		margin-top: 0.75rem;
+	}
+	.muted {
 		color: var(--hk-text-3);
 	}
 	.buttons {
@@ -210,17 +395,6 @@
 	.result {
 		font-size: 0.875rem;
 		min-width: 0;
-	}
-	.result > span {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 0.5rem;
-	}
-	.result .hk-dot {
-		transform: translateY(-1px);
-	}
-	.ok {
-		color: var(--hk-text-2);
 	}
 	.bad {
 		color: var(--hk-err);

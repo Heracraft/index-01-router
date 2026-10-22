@@ -296,34 +296,6 @@ describe('openai', () => {
 			languages: []
 		});
 	});
-
-	it('tests the connection against /models', async () => {
-		const ok = fakeFetch([json({ id: 'gpt-transcribe', object: 'model' })]);
-		expect(await openai.test(settings(), ctx(ok.f))).toBe('gpt-transcribe available');
-		expect(ok.calls[0]!.url).toBe('https://api.openai.com/v1/models/gpt-transcribe');
-		const listed = fakeFetch([
-			new Response('', { status: 404 }),
-			json({ data: [{ id: 'gpt-transcribe' }] })
-		]);
-		expect(await openai.test(settings(), ctx(listed.f))).toBe('gpt-transcribe available');
-		expect(listed.calls[1]!.url).toBe('https://api.openai.com/v1/models');
-		const missing = fakeFetch([
-			json({ error: { message: 'The model does not exist' } }, 404),
-			json({ data: [{ id: 'whisper-1' }] })
-		]);
-		await expect(openai.test(settings(), ctx(missing.f))).rejects.toThrow(
-			'gpt-transcribe not offered by api.openai.com'
-		);
-		const bad = fakeFetch([json({ error: { message: 'Incorrect API key' } }, 401)]);
-		await expect(openai.test(settings(), ctx(bad.f))).rejects.toThrow(
-			'Key rejected by api.openai.com (401)'
-		);
-		const nolist = fakeFetch([new Response('not found', { status: 404 })]);
-		const s = settings({ openai: { baseUrl: 'http://speaches:8000/v1', apiKey: '', model: 'x' } });
-		expect(await openai.test(s, ctx(nolist.f))).toBe(
-			'speaches:8000 answered, but has no model list to check x against'
-		);
-	});
 });
 
 describe('openai-audio', () => {
@@ -407,12 +379,8 @@ describe('gemini', () => {
 				400
 			)
 		]);
-		await expect(gemini.test(settings(), ctx(bad.f))).rejects.toThrow(
+		await expect(gemini.transcribe(audio, settings(), ctx(bad.f))).rejects.toThrow(
 			'Key rejected by generativelanguage.googleapis.com (400)'
-		);
-		const missing = fakeFetch([json({ error: { code: 404, message: 'not found' } }, 404)]);
-		await expect(gemini.test(settings(), ctx(missing.f))).rejects.toThrow(
-			'gemini-3.8-flash not offered by generativelanguage.googleapis.com'
 		);
 		expect(() => parseGeminiReply('{"promptFeedback":{"blockReason":"SAFETY"}}')).toThrow(
 			'Gemini blocked the request (SAFETY)'
@@ -429,28 +397,8 @@ describe('gemini', () => {
 		).toBe('gemini-3.5-flash-lite');
 	});
 
-	it('tests with a model GET, then a generateContent of silence', async () => {
-		const { f, calls } = fakeFetch([
-			json({ name: 'models/gemini-3.8-flash' }),
-			json({
-				candidates: [{ content: { parts: [{ text: '{"text":"' }] }, finishReason: 'MAX_TOKENS' }]
-			})
-		]);
-		expect(await gemini.test(settings(), ctx(f))).toBe('gemini-3.8-flash transcribes');
-		expect(calls.map((c) => c.url)).toEqual([
-			'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash',
-			'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent'
-		]);
-		const body = JSON.parse(calls[1]!.init.body as string);
-		expect(body.generationConfig.maxOutputTokens).toBe(64);
-		const audioPart = body.contents[0].parts[1].inline_data;
-		expect(audioPart.mime_type).toBe('audio/ogg');
-		expect(Buffer.from(audioPart.data, 'base64').subarray(0, 4).toString()).toBe('OggS');
-	});
-
 	it('names the model when generateContent refuses it', async () => {
 		const { f } = fakeFetch([
-			json({ name: 'models/gemini-2.5-flash' }),
 			json(
 				{
 					error: {
@@ -463,7 +411,7 @@ describe('gemini', () => {
 			)
 		]);
 		const s = settings({ gemini: { apiKey: 'k', model: 'gemini-2.5-flash' } });
-		const err = await gemini.test(s, ctx(f)).catch((e) => e);
+		const err = (await gemini.transcribe(audio, s, ctx(f)).catch((e) => e)) as TranscribeError;
 		expect(err.message).toBe(
 			'gemini-2.5-flash not available to this key (403): Your project does not have access to model gemini-2.5-flash.'
 		);
@@ -561,16 +509,6 @@ describe('whisper-cpp', () => {
 		).toEqual({ text: 'Real words.', languages: ['nn'], noSpeech: 0.05 });
 		expect(() => parseWhisperReply('{"error":"failed to read audio"}')).toThrow(
 			'whisper.cpp: failed to read audio'
-		);
-	});
-
-	it('tests with GET /', async () => {
-		const { f, calls } = fakeFetch([new Response('<html>whisper</html>')]);
-		expect(await whisperCpp.test(settings(), ctx(f))).toBe('whisper.cpp answering at whisper:8080');
-		expect(calls[0]!.url).toBe('http://whisper:8080/');
-		const loading = fakeFetch([json({ status: 'loading model' }, 503)]);
-		await expect(whisperCpp.test(settings(), ctx(loading.f))).rejects.toThrow(
-			'whisper.cpp at whisper:8080 is still loading its model'
 		);
 	});
 });

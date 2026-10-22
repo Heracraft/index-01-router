@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { enhance } from '$app/forms';
 	import PageHead from '#lib/components/PageHead.svelte';
+	import Signal, { type SignalTone } from '#lib/components/Signal.svelte';
 	import { formatDateTime, triggerLabel } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
@@ -10,6 +11,14 @@
 	const tz = $derived(data.timezone);
 	const triggers = (list: string[]) =>
 		list.length ? list.map(triggerLabel).join(', ') : 'All triggers';
+	const TONE: Record<string, SignalTone> = {
+		sent: 'ok',
+		pending: 'busy',
+		failed: 'err',
+		skipped: 'idle'
+	};
+	const lost = $derived(new Set(data.lostIntegrations.map((i) => i.id)));
+	const manyKinds = $derived(data.kinds.length > 1);
 	const STATUS: Record<string, string> = {
 		sent: 'Sent',
 		failed: 'Failed',
@@ -42,7 +51,7 @@
 			<thead>
 				<tr>
 					<th>Name</th>
-					<th>Kind</th>
+					{#if manyKinds}<th>Kind</th>{/if}
 					<th>Triggers</th>
 					<th>Last delivery</th>
 					<th>Enabled</th>
@@ -53,25 +62,34 @@
 					<tr class:off={!i.enabled}>
 						<td class="name-cell">
 							<a class="name" href={resolve('/(app)/integrations/[id]', { id: i.id })}>{i.name}</a>
-							<span class="meta">{i.kindLabel} · {triggers(i.triggers)}</span>
+							<span class="meta">{manyKinds ? `${i.kindLabel} · ` : ''}{triggers(i.triggers)}</span>
 						</td>
-						<td class="wide">{i.kindLabel}</td>
+						{#if manyKinds}<td class="wide">{i.kindLabel}</td>{/if}
 						<td class="wide">{triggers(i.triggers)}</td>
 						<td class="last">
-							{#if i.last}
+							{#if lost.has(i.id)}
+								<a class="last-link" href={resolve('/(app)/integrations/[id]', { id: i.id })}>
+									<Signal tone="err" label="Key unreadable" />
+								</a>
+							{:else if i.last}
 								<a
 									class="last-link"
 									href={resolve('/(app)/recordings/[id]', { id: i.last.recordingId })}
 								>
 									{#if i.last.status === 'failed'}
-										<span class="hk-badge hk-badge--err">Failed</span>
+										<Signal tone="err" label="Failed" />
 									{:else}
-										<span>{STATUS[i.last.status] ?? i.last.status}</span>
+										<Signal
+											tone={TONE[i.last.status] ?? 'idle'}
+											label={STATUS[i.last.status] ?? i.last.status}
+											hideLabel
+										/>
+										{#if i.last.target}<span class="hk-mono target">{i.last.target}</span>{/if}
 									{/if}
 									<span class="when hk-num">{formatDateTime(i.last.at, tz)}</span>
 								</a>
 							{:else}
-								<span class="when">None yet</span>
+								<span class="when">Never</span>
 							{/if}
 						</td>
 						<td>
@@ -85,7 +103,6 @@
 										onchange={(e) => e.currentTarget.form?.requestSubmit()}
 									/>
 									<span class="hk-sr">Enabled</span>
-									<span aria-hidden="true">{i.enabled ? 'On' : 'Off'}</span>
 								</label>
 							</form>
 						</td>
@@ -130,6 +147,14 @@
 	}
 	.when {
 		color: var(--hk-text-3);
+	}
+	.target {
+		font-size: 0.75rem;
+		color: var(--hk-text-2);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.hk-check {
 		font-size: 0.8125rem;

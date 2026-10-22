@@ -3,13 +3,16 @@ import { TZ } from '$app/env/private';
 import {
 	envLocks,
 	getStored,
+	getStoredWithStatus,
+	keyReadiness,
 	setStored,
 	withEnvKeys,
 	type GeneralSettings,
 	type TranscribeProvider,
 	type TranscriptionSettings
 } from '#lib/server/settings.ts';
-import { PROVIDERS, testTranscription } from '#lib/server/transcribe/index.ts';
+import { CHUNK_SECONDS, PROVIDERS } from '#lib/server/transcribe/index.ts';
+import { probeTranscription } from '#lib/server/transcribe/probe.ts';
 import { isLanguageCode } from '#lib/format.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -22,7 +25,10 @@ function timeZones() {
 }
 
 export const load: PageServerLoad = async () => {
-	const [t, general] = await Promise.all([getStored('transcription'), getStored('general')]);
+	const [{ value: t, lost }, general] = await Promise.all([
+		getStoredWithStatus('transcription'),
+		getStored('general')
+	]);
 	const zones = timeZones();
 	return {
 		providers: PROVIDERS,
@@ -41,6 +47,14 @@ export const load: PageServerLoad = async () => {
 			openaiAudio: !!t.openaiAudio.apiKey,
 			gemini: !!t.gemini.apiKey
 		},
+		// Stored, but AUTH_SECRET no longer opens them
+		keysLost: {
+			openai: lost.includes('openai.apiKey'),
+			openaiAudio: lost.includes('openaiAudio.apiKey'),
+			gemini: lost.includes('gemini.apiKey')
+		},
+		ready: keyReadiness(t, lost),
+		chunkSeconds: CHUNK_SECONDS,
 		envLocks,
 		generalTimezone: general.timezone,
 		envTimezone: TZ,
@@ -62,18 +76,18 @@ async function readForm(request: Request) {
 	const errors: Errors = {};
 
 	const provider = str('provider');
-	if (!PROVIDER_IDS.includes(provider)) errors.provider = 'Provider: pick one of the options.';
+	if (!PROVIDER_IDS.includes(provider)) errors.provider = 'Pick one of the providers.';
 
 	const key = (field: string, current: string) =>
 		data.get(`${field}.clear`) === '1' ? '' : str(field) || current;
 
-	const url = (field: string, fallback: string, label: string) => {
+	const url = (field: string, fallback: string) => {
 		const v = str(field) || fallback;
 		try {
 			const u = new URL(v);
 			if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error();
 		} catch {
-			errors[field] = `${label} must start with http:// or https://.`;
+			errors[field] = 'Must start with http:// or https://.';
 		}
 		return v.replace(/\/+$/, '');
 	};
@@ -88,18 +102,18 @@ async function readForm(request: Request) {
 	];
 	const badLang = languages.filter((l) => !isLanguageCode(l));
 	if (badLang.length) {
-		errors.languages = `Languages: ${badLang.join(', ')} is not an ISO 639-1 code such as sw or en.`;
+		errors.languages = `${badLang.join(', ')} is not an ISO 639-1 code such as sw or en.`;
 	}
 
 	const settings: TranscriptionSettings = {
 		provider: (PROVIDER_IDS.includes(provider) ? provider : stored.provider) as TranscribeProvider,
 		openai: {
-			baseUrl: url('openai.baseUrl', stored.openai.baseUrl, 'Base URL'),
+			baseUrl: url('openai.baseUrl', stored.openai.baseUrl),
 			model: str('openai.model'),
 			apiKey: key('openai.apiKey', stored.openai.apiKey)
 		},
 		openaiAudio: {
-			baseUrl: url('openaiAudio.baseUrl', stored.openaiAudio.baseUrl, 'Base URL'),
+			baseUrl: url('openaiAudio.baseUrl', stored.openaiAudio.baseUrl),
 			model: str('openaiAudio.model'),
 			apiKey: key('openaiAudio.apiKey', stored.openaiAudio.apiKey)
 		},
@@ -107,7 +121,7 @@ async function readForm(request: Request) {
 			model: str('gemini.model'),
 			apiKey: key('gemini.apiKey', stored.gemini.apiKey)
 		},
-		whisperCpp: { url: url('whisperCpp.url', stored.whisperCpp.url, 'Server URL') },
+		whisperCpp: { url: url('whisperCpp.url', stored.whisperCpp.url) },
 		languages: badLang.length ? stored.languages : languages,
 		prompt: String(data.get('prompt') ?? '').replace(/\r\n?/g, '\n'),
 		chunking: data.get('chunking') === 'on'
@@ -119,10 +133,33 @@ async function readForm(request: Request) {
 		try {
 			new Intl.DateTimeFormat('en-US', { timeZone: timezone });
 		} catch {
-			errors.timezone = `Timezone: ${timezone} is not an IANA zone such as Africa/Nairobi.`;
+			errors.timezone = `${timezone} is not an IANA zone such as Africa/Nairobi.`;
 		}
 	}
 	return { settings, timezone, errors };
+}
+
+/** The form field a provider error is about: the key, the URL, or the model */
+function fieldOf(provider: TranscribeProvider, message: string): string | null {
+	const prefix =
+		provider === 'openai'
+			? 'openai'
+			: provider === 'openai-audio'
+				? 'openaiAudio'
+				: provider === 'gemini'
+					? 'gemini'
+					: 'whisperCpp';
+	if (/Key rejected|No API key/i.test(message))
+		return provider === 'whisper-cpp' ? null : `${prefix}.apiKey`;
+	if (/not available to this key|not offered|model/i.test(message) && provider !== 'whisper-cpp')
+		return `${prefix}.model`;
+	if (/Could not reach|Not a URL|did not answer|answered 404/i.test(message))
+		return provider === 'whisper-cpp'
+			? 'whisperCpp.url'
+			: provider === 'gemini'
+				? null
+				: `${prefix}.baseUrl`;
+	return null;
 }
 
 export const actions: Actions = {
@@ -142,14 +179,15 @@ export const actions: Actions = {
 	test: async ({ request }) => {
 		const { settings, errors } = await readForm(request);
 		if (Object.keys(errors).length) return fail(400, { action: 'test', errors });
-		const signal = AbortSignal.timeout(30_000);
+		const signal = AbortSignal.timeout(60_000);
 		try {
-			const message = await testTranscription(withEnvKeys(settings), { signal });
-			return { action: 'test', test: { ok: true, message } };
+			const r = await probeTranscription(withEnvKeys(settings), { signal });
+			return { action: 'test', test: { ok: true as const, ...r } };
 		} catch (e) {
+			const message = e instanceof Error ? e.message : String(e);
 			return {
 				action: 'test',
-				test: { ok: false, message: e instanceof Error ? e.message : String(e) }
+				test: { ok: false as const, message, field: fieldOf(settings.provider, message) }
 			};
 		}
 	}

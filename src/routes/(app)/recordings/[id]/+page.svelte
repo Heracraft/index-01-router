@@ -4,16 +4,20 @@
 	import ConfirmAction from '#lib/components/ConfirmAction.svelte';
 	import CopyButton from '#lib/components/CopyButton.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import NotePreview from '#lib/components/NotePreview.svelte';
 	import PageHead from '#lib/components/PageHead.svelte';
+	import Signal from '#lib/components/Signal.svelte';
 	import StatusDot from '#lib/components/StatusDot.svelte';
 	import Trigger from '#lib/components/Trigger.svelte';
+	import { cleanError, describeRecording } from '#lib/recording-state.ts';
 	import {
 		formatBytes,
 		formatDateTime,
 		formatDuration,
 		formatElapsed,
 		isPending,
-		languageName
+		languageName,
+		triggerLabel
 	} from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
@@ -22,8 +26,40 @@
 	const rec = $derived(data.recording);
 	const tz = $derived(data.timezone);
 	const busy = $derived(isPending(rec.status));
+	const st = $derived(describeRecording(rec));
 	const failedDeliveries = $derived(data.deliveries.filter((d) => d.status === 'failed').length);
 	const ext = $derived(rec.audioMime?.split('/')[1]?.split(';')[0]?.replace(/^x-/, '') ?? '');
+	const hasTranscript = $derived(!!rec.transcript?.trim());
+
+	// Header delivery button: what pressing it does, or nothing to do
+	const deliverLabel = $derived(
+		failedDeliveries > 0
+			? `Retry ${failedDeliveries} failed`
+			: data.deliveries.length === 0 && data.matching.length
+				? data.matching.length === 1
+					? `Deliver to ${data.matching[0].name}`
+					: `Deliver to ${data.matching.length} integrations`
+				: null
+	);
+
+	// Delete dialog: one line of what goes and what stays
+	const sentTargets = $derived([
+		...new Set(data.deliveries.filter((d) => d.status === 'sent' && d.target).map((d) => d.target!))
+	]);
+	const deleteLine = $derived(
+		[
+			rec.hasAudio
+				? `Audio (${[ext, formatBytes(rec.audioBytes)].filter(Boolean).join(', ')}) and transcript go.`
+				: 'Transcript goes.',
+			sentTargets.length === 1
+				? `${sentTargets[0]} keeps its entry.`
+				: sentTargets.length > 1
+					? `${sentTargets.join(', ')} keep their entries.`
+					: ''
+		]
+			.filter(Boolean)
+			.join(' ')
+	);
 
 	let pending = $state<string | null>(null);
 	const submit = (key: string) => () => {
@@ -34,12 +70,7 @@
 		};
 	};
 
-	const DELIVERY: Record<string, string> = {
-		pending: 'Pending',
-		sent: 'Sent',
-		failed: 'Failed',
-		skipped: 'Skipped'
-	};
+	const lineCount = (text: string | null) => (text ?? '').split('\n').length;
 </script>
 
 <nav class="crumbs" aria-label="Breadcrumb">
@@ -51,18 +82,14 @@
 		<span class="hk-mono">{rec.deliveryId}</span>
 	{/snippet}
 	{#snippet actions()}
-		{#if rec.transcript}
+		{#if hasTranscript && deliverLabel}
 			<form method="POST" action="?/route" use:enhance={submit('route')}>
 				<button
 					class="hk-btn-secondary"
 					disabled={busy || !!pending}
 					aria-busy={pending === 'route'}
 				>
-					{pending === 'route'
-						? 'Delivering…'
-						: failedDeliveries > 0 || rec.status === 'failed'
-							? 'Deliver again'
-							: 'Deliver'}
+					{pending === 'route' ? 'Delivering…' : deliverLabel}
 				</button>
 			</form>
 		{/if}
@@ -77,11 +104,13 @@
 				</button>
 			</form>
 		{/if}
-		<ConfirmAction action="?/delete" label="Delete" title="Delete recording" confirmLabel="Delete">
-			<p>
-				Delete the recording from {formatDateTime(rec.recordedAt, tz)}? The audio file and
-				transcript go too. Notes already delivered stay where they are.
-			</p>
+		<ConfirmAction
+			action="?/delete"
+			label="Delete"
+			title="Delete {formatDateTime(rec.recordedAt, tz)}"
+			confirmLabel="Delete"
+		>
+			<p>{deleteLine}</p>
 		</ConfirmAction>
 	{/snippet}
 </PageHead>
@@ -89,16 +118,26 @@
 {#if form && 'error' in form && form.error}
 	<p class="hk-banner hk-banner--err" role="alert">{form.error}</p>
 {/if}
-{#if rec.status === 'failed' && rec.error}
-	<p class="hk-banner hk-banner--err" role="status">{rec.error}</p>
-{:else if rec.error && !busy}
-	<p class="hk-banner" role="status">{rec.error}</p>
+{#if st.other}
+	<p class="hk-banner hk-banner--err" role="status">{st.other}</p>
 {/if}
 
 <dl class="facts">
 	<div>
 		<dt>Status</dt>
-		<dd><StatusDot status={rec.status} /></dd>
+		<dd class="status">
+			{#if rec.status === 'failed' && failedDeliveries > 0}
+				<StatusDot status="failed" />
+				<a href="#deliveries" class="muted"
+					>· {failedDeliveries} {failedDeliveries === 1 ? 'delivery' : 'deliveries'}</a
+				>
+			{:else if st.retry}
+				<StatusDot status={rec.status} attempt={st.retry.attempt} />
+				{#if st.retry.lastError}<span class="muted">· {st.retry.lastError}</span>{/if}
+			{:else}
+				<StatusDot status={rec.status} />
+			{/if}
+		</dd>
 	</div>
 	<div>
 		<dt>Trigger</dt>
@@ -114,8 +153,8 @@
 		<div>
 			<dt>Languages</dt>
 			<dd>
-				{rec.languages.map(languageName).join(', ')}
-				<span class="muted hk-mono">{rec.languages.join(' ')}</span>
+				{#each rec.languages as c, i (c)}{i ? ', ' : ''}<span title={c}>{languageName(c)}</span
+					>{/each}
 			</dd>
 		</div>
 	{/if}
@@ -123,9 +162,15 @@
 		<div>
 			<dt>Transcribed by</dt>
 			<dd>
-				<span class="hk-mono">{rec.transcribedBy}</span>
-				{#if rec.transcribeMs != null}<span class="muted">· {formatElapsed(rec.transcribeMs)}</span
-					>{/if}
+				{#if rec.transcribedBy === 'index-app'}
+					Phone app
+					{#if st.fallbackReason}<span class="muted">· {st.fallbackReason}</span>{/if}
+				{:else}
+					<span class="hk-mono">{rec.transcribedBy}</span>
+					{#if rec.transcribeMs != null}<span class="muted"
+							>· {formatElapsed(rec.transcribeMs)}</span
+						>{/if}
+				{/if}
 			</dd>
 		</div>
 	{/if}
@@ -149,7 +194,7 @@
 			<dd class="hk-num">{[ext, formatBytes(rec.audioBytes)].filter(Boolean).join(' · ')}</dd>
 		</div>
 	{/if}
-	{#if rec.attempts > 1}
+	{#if rec.attempts > 1 && !busy}
 		<div>
 			<dt>Attempts</dt>
 			<dd class="hk-num">{rec.attempts}</dd>
@@ -166,10 +211,18 @@
 		<h2>Transcript</h2>
 		{#if rec.transcript}<CopyButton text={rec.transcript} label="Copy" />{/if}
 	</div>
-	{#if rec.transcript}
+	{#if st.slot.kind === 'text'}
 		<p class="transcript">{rec.transcript}</p>
+	{:else if st.slot.kind === 'pending'}
+		<div class="skeleton" aria-hidden="true">
+			<span class="hk-skeleton" style:width="92%"></span>
+			<span class="hk-skeleton" style:width="78%"></span>
+			<span class="hk-skeleton" style:width="40%"></span>
+		</div>
+	{:else if st.slot.kind === 'error'}
+		<div class="hk-empty-row err"><span>{st.slot.text}</span></div>
 	{:else}
-		<div class="hk-empty-row"><StatusDot status={rec.status} /></div>
+		<div class="hk-empty-row"><span>No speech</span></div>
 	{/if}
 
 	{#if rec.appTranscript}
@@ -180,111 +233,122 @@
 	{/if}
 </section>
 
-<section>
-	<div class="sec-head">
-		<h2>Deliveries</h2>
-		{#if data.deliveries.length}
-			<span class="caption hk-num">
-				{data.deliveries.filter((d) => d.status === 'sent').length} of {data.deliveries.length} sent
-			</span>
-		{/if}
-	</div>
-	{#if data.deliveries.length === 0}
-		<div class="hk-empty-row">
-			<span>{busy ? 'No deliveries yet.' : 'No deliveries on record.'}</span>
-			<a class="hk-link" href={resolve('/(app)/integrations')}>Integrations</a>
+{#if hasTranscript}
+	<section id="deliveries">
+		<div class="sec-head">
+			<h2>Deliveries</h2>
 		</div>
-	{:else}
-		<div class="tbl" role="region" aria-label="Deliveries" tabindex="-1">
-			<table class="hk-table">
-				<thead>
-					<tr>
-						<th>Integration</th>
-						<th>Status</th>
-						<th>Target</th>
-						<th class="hk-num-col">Attempts</th>
-						<th>Error</th>
-						<th><span class="hk-sr">Action</span></th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each data.deliveries as d (d.id)}
+		{#if data.deliveries.length === 0}
+			<div class="hk-empty-row">
+				{#if data.matching.length}
+					<span>No deliveries yet.</span>
+				{:else}
+					<span>No integration takes {triggerLabel(rec.trigger).toLowerCase() || 'this'}.</span>
+					<a class="hk-link" href={resolve('/(app)/integrations')}>Integrations</a>
+				{/if}
+			</div>
+		{:else}
+			<div class="tbl" role="region" aria-label="Deliveries" tabindex="-1">
+				<table class="hk-table">
+					<thead>
 						<tr>
-							<td data-label="Integration">
-								<a class="name" href={resolve('/(app)/integrations/[id]', { id: d.integrationId })}
-									>{d.name}</a
-								>
-							</td>
-							<td data-label="Status">
-								{#if d.status === 'failed'}
-									<span class="hk-badge hk-badge--err">Failed</span>
-								{:else if d.status === 'pending'}
-									<span class="pending"><span class="hk-dot hk-dot--busy"></span>Pending</span>
-								{:else if d.stale}
-									<span class="sent-stale"
-										>Sent <span
-											class="hk-badge hk-badge--warn"
-											title="Sent before the transcript changed">Stale</span
-										></span
-									>
-								{:else}
-									{DELIVERY[d.status] ?? d.status}
-								{/if}
-							</td>
-							<td data-label="Target" class="hk-mono target">{d.target ?? ''}</td>
-							<td data-label="Attempts" class="hk-num-col">{d.attempts}</td>
-							<td data-label="Error" class="error" class:soft={d.status !== 'failed'}
-								>{d.error ?? ''}</td
-							>
-							<td class="act">
-								{#if d.status === 'failed' || d.status === 'skipped'}
-									<form method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
-										<input type="hidden" name="delivery" value={d.id} />
-										<button
-											class="hk-btn-secondary hk-btn-sm"
-											disabled={busy || !!pending}
-											aria-busy={pending === d.id}
-										>
-											{pending === d.id
-												? d.status === 'skipped'
-													? 'Delivering…'
-													: 'Retrying…'
-												: d.status === 'skipped'
-													? 'Deliver'
-													: 'Retry'}
-										</button>
-									</form>
-								{:else if d.status === 'sent'}
-									<ConfirmAction
-										action="?/redeliver"
-										fields={{ delivery: d.id }}
-										label={d.stale ? 'Send corrected transcript' : 'Send again'}
-										title={d.stale ? 'Send corrected transcript' : 'Send again'}
-										confirmLabel="Send"
-										triggerClass="hk-btn-secondary hk-btn-sm"
-										confirmClass="hk-btn"
-										disabled={busy || !!pending}
-									>
-										{#if d.stale}
-											<p class="confirm">
-												Adds the new transcript to {d.target ?? d.name} as a new entry. The old entry
-												stays.
-											</p>
-										{:else}
-											<p class="confirm">
-												Adds the entry to {d.target ?? d.name} again, unless it is still there.
-											</p>
-										{/if}
-									</ConfirmAction>
-								{/if}
-							</td>
+							<th>Integration</th>
+							<th>Status</th>
+							<th>Target</th>
+							<th>Error</th>
+							<th><span class="hk-sr">Action</span></th>
 						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
-</section>
+					</thead>
+					<tbody>
+						{#each data.deliveries as d (d.id)}
+							<tr>
+								<td data-label="Integration">
+									<a
+										class="name"
+										href={resolve('/(app)/integrations/[id]', { id: d.integrationId })}>{d.name}</a
+									>
+								</td>
+								<td data-label="Status">
+									<span class="cell-status">
+										{#if d.status === 'failed'}
+											<span class="hk-badge hk-badge--err">Failed</span>
+										{:else if d.status === 'pending'}
+											<Signal
+												tone={d.error ? 'warn' : 'busy'}
+												label={d.error ? 'Retrying' : 'Pending'}
+											/>
+										{:else if d.status === 'sent'}
+											Sent
+											{#if d.stale}<span class="hk-badge hk-badge--warn">Stale</span>{/if}
+										{:else}
+											Skipped
+										{/if}
+										{#if d.attempts > 1}<span class="muted hk-num">× {d.attempts}</span>{/if}
+									</span>
+								</td>
+								<td data-label="Target" class="hk-mono target">{d.target ?? ''}</td>
+								<td data-label="Error" class="error" class:soft={d.status !== 'failed'}
+									>{d.error ? cleanError(d.error) : ''}</td
+								>
+								<td class="act">
+									{#if d.status === 'failed' || d.status === 'skipped'}
+										<form method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
+											<input type="hidden" name="delivery" value={d.id} />
+											<button
+												class="hk-btn-secondary hk-btn-sm"
+												disabled={busy || !!pending}
+												aria-busy={pending === d.id}
+											>
+												{pending === d.id
+													? d.status === 'skipped'
+														? 'Delivering…'
+														: 'Retrying…'
+													: d.status === 'skipped'
+														? 'Deliver'
+														: 'Retry'}
+											</button>
+										</form>
+									{:else if d.status === 'sent' && d.stale}
+										<ConfirmAction
+											action="?/redeliver"
+											fields={{ delivery: d.id }}
+											label="Send corrected transcript"
+											title="Append to {d.target ?? d.name}"
+											confirmLabel="Append"
+											triggerClass="hk-btn-secondary hk-btn-sm"
+											confirmClass="hk-btn"
+											size="md"
+											disabled={busy || !!pending}
+										>
+											<div class="confirm">
+												<NotePreview
+													path={d.target ?? d.name}
+													body={d.preview ?? ''}
+													entryLines={[0, lineCount(d.preview)]}
+												/>
+											</div>
+										</ConfirmAction>
+									{:else if d.status === 'sent'}
+										<form method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
+											<input type="hidden" name="delivery" value={d.id} />
+											<button
+												class="hk-btn-secondary hk-btn-sm"
+												disabled={busy || !!pending}
+												aria-busy={pending === d.id}
+											>
+												{pending === d.id ? 'Sending…' : 'Send again'}
+											</button>
+										</form>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
+{/if}
 
 <style>
 	.crumbs {
@@ -372,9 +436,36 @@
 		line-height: 1.75rem;
 		letter-spacing: -0.01em;
 	}
-	.caption {
-		font-size: 0.8125rem;
-		color: var(--hk-text-3);
+	.status {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem;
+	}
+	.status a {
+		text-decoration: none;
+	}
+	.status a:hover {
+		color: var(--hk-text);
+	}
+	.skeleton {
+		display: grid;
+		gap: 0.6rem;
+		max-width: 42rem;
+		padding-block: 0.45rem;
+	}
+	.skeleton .hk-skeleton {
+		height: 1rem;
+	}
+	.hk-empty-row.err {
+		color: var(--hk-err);
+		overflow-wrap: anywhere;
+	}
+	.cell-status {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		white-space: nowrap;
 	}
 	.transcript {
 		max-width: 42rem;
@@ -436,16 +527,6 @@
 		white-space: normal;
 		text-align: left;
 	}
-	.sent-stale {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-	.pending {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
 
 	/* Phone: one block per delivery */
 	@media (max-width: 639.98px) {
@@ -474,7 +555,7 @@
 			text-align: left;
 			padding-top: 0.5rem !important;
 		}
-		.hk-table td:is([data-label='Attempts'], [data-label='Target'])::before {
+		.hk-table td:is([data-label='Target'])::before {
 			content: attr(data-label) ' ';
 			font-family: var(--hk-font-sans);
 			color: var(--hk-text-3);

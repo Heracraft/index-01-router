@@ -1,6 +1,12 @@
 import { error, fail, redirect } from '@sveltejs/kit';
+import { and, desc, eq, ne } from 'drizzle-orm';
+import { db } from '#lib/server/db/index.ts';
+import { recordings } from '#lib/server/db/schema.ts';
+import { getSettings } from '#lib/server/settings.ts';
 import {
+	DeliverError,
 	deleteIntegration,
+	deliveryCount,
 	getIntegrationForUI,
 	IntegrationInputError,
 	isKind,
@@ -15,6 +21,23 @@ import type { Actions, PageServerLoad } from './$types';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The latest transcribed recording, for the note preview. Null without one */
+async function sample() {
+	const [r] = await db
+		.select({
+			recordedAt: recordings.recordedAt,
+			transcript: recordings.transcript,
+			languages: recordings.languages,
+			trigger: recordings.trigger,
+			durationMs: recordings.durationMs
+		})
+		.from(recordings)
+		.where(and(eq(recordings.status, 'done'), ne(recordings.transcript, '')))
+		.orderBy(desc(recordings.recordedAt))
+		.limit(1);
+	return r ? { ...r, languages: (r.languages ?? '').split(',').filter(Boolean) } : null;
+}
+
 function kindMeta(kind: Kind) {
 	const k = kinds[kind];
 	return { kind: k.kind, label: k.label, fields: k.fields, secrets: k.secrets };
@@ -23,7 +46,8 @@ function kindMeta(kind: Kind) {
 export const load: PageServerLoad = async ({ params, url }) => {
 	if (params.id === 'new') {
 		const kind = url.searchParams.get('kind') ?? 'obsidian';
-		if (!isKind(kind)) error(404, `Unknown integration kind: ${kind}`);
+		// The list has an Add button per kind
+		if (!isKind(kind)) redirect(303, '/integrations');
 		const meta = kindMeta(kind);
 		const config: Record<string, unknown> = {};
 		for (const f of meta.fields) config[f.key] = f.default ?? (f.type === 'boolean' ? false : '');
@@ -36,8 +60,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
 				enabled: true,
 				triggers: [] as string[],
 				config,
-				secretsSet: {} as Record<string, boolean>
-			}
+				secretsSet: {} as Record<string, boolean>,
+				secretsLost: {} as Record<string, boolean>
+			},
+			deliveryCount: 0,
+			sample: await sample()
 		};
 	}
 	if (!UUID.test(params.id)) error(404, 'Integration not found');
@@ -52,8 +79,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			enabled: row.enabled,
 			triggers: row.triggers,
 			config: row.config,
-			secretsSet: row.secretsSet
-		}
+			secretsSet: row.secretsSet,
+			secretsLost: row.secretsLost
+		},
+		deliveryCount: await deliveryCount(row.id),
+		sample: await sample()
 	};
 };
 
@@ -98,11 +128,7 @@ export const actions: Actions = {
 		if (!isKind(kind)) error(404, `Unknown integration kind: ${kind}`);
 		const input = await readForm(request, kind);
 		if (input.noTriggers) {
-			return fail(400, {
-				action: 'save',
-				error: 'Triggers: pick at least one.',
-				field: 'triggers'
-			});
+			return fail(400, { action: 'save', error: 'Pick at least one.', field: 'triggers' });
 		}
 		try {
 			const row = await saveIntegration({
@@ -117,7 +143,7 @@ export const actions: Actions = {
 			return { action: 'save', saved: true };
 		} catch (e) {
 			if (e instanceof IntegrationInputError) {
-				return fail(400, { action: 'save', error: e.message, field: null });
+				return fail(400, { action: 'save', error: e.message, field: e.field ?? null });
 			}
 			throw e;
 		}
@@ -126,15 +152,19 @@ export const actions: Actions = {
 		const kind = await kindFor(params.id, url);
 		if (!isKind(kind)) error(404, `Unknown integration kind: ${kind}`);
 		const input = await readForm(request, kind);
+		const { timezone } = await getSettings('general');
 		try {
-			const result = await testIntegration(
+			const found = await testIntegration(
 				kind,
 				input.config,
-				params.id === 'new' ? undefined : params.id
+				params.id === 'new' ? undefined : params.id,
+				timezone
 			);
-			return { action: 'test', test: { ok: true, message: result } };
+			return { action: 'test', test: { ok: true as const, ...found }, field: null };
 		} catch (e) {
-			return { action: 'test', test: { ok: false, message: message(e) } };
+			const field =
+				e instanceof DeliverError || e instanceof IntegrationInputError ? (e.field ?? null) : null;
+			return { action: 'test', test: { ok: false as const, message: message(e) }, field };
 		}
 	},
 	delete: async ({ params }) => {

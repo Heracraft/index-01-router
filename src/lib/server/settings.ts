@@ -41,6 +41,8 @@ export interface WebhookSettings {
 	requireSignature: boolean;
 	/** AUTH_SECRET changed and a new secret replaced the lost one. Cleared on reveal or rotate */
 	secretReset?: boolean;
+	/** ISO time of the last Rotate, to tell whether the app has sent with the new secret since */
+	rotatedAt?: string;
 }
 
 export interface SessionSettings {
@@ -282,4 +284,38 @@ export async function getSettings<K extends keyof Shapes>(key: K): Promise<Shape
 	}
 	if (key === 'transcription') return withEnvKeys(value as TranscriptionSettings) as Shapes[K];
 	return value;
+}
+
+export type KeyReadiness = 'ok' | 'lost' | 'missing' | null;
+
+/** Path of each provider's key in TranscriptionSettings, and the field id on /transcription */
+export const PROVIDER_KEYS: Record<TranscribeProvider, { path: string; field: string } | null> = {
+	openai: { path: 'openai.apiKey', field: 'openai-key' },
+	'openai-audio': { path: 'openaiAudio.apiKey', field: 'audio-key' },
+	gemini: { path: 'gemini.apiKey', field: 'gemini-key' },
+	'whisper-cpp': null
+};
+
+/**
+ * Whether each provider has a key it can use: stored or from the environment (ok), stored but
+ * unreadable after an AUTH_SECRET change (lost), or none where one is needed (missing). Null for
+ * providers that take no key, and for self-hosted OpenAI compatible servers without one.
+ */
+export function keyReadiness(
+	t: TranscriptionSettings,
+	lost: string[]
+): Record<TranscribeProvider, KeyReadiness> {
+	const effective = withEnvKeys(t);
+	const one = (key: string, path: string, needsKey: boolean): KeyReadiness =>
+		key ? 'ok' : lost.includes(path) ? 'lost' : needsKey ? 'missing' : null;
+	return {
+		openai: one(effective.openai.apiKey, 'openai.apiKey', isOpenAI(t.openai.baseUrl)),
+		'openai-audio': one(
+			effective.openaiAudio.apiKey,
+			'openaiAudio.apiKey',
+			isOpenAI(t.openaiAudio.baseUrl)
+		),
+		gemini: one(effective.gemini.apiKey, 'gemini.apiKey', true),
+		'whisper-cpp': null
+	};
 }

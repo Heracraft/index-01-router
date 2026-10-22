@@ -19,6 +19,8 @@ vi.mock('#lib/server/integrations/index.ts', () => {
 		TRIGGERS: ['single-click-hold', 'double-click-hold', 'upload'],
 		isKind: (k: string) => Object.hasOwn(kinds, k),
 		IntegrationInputError: class extends Error {},
+		DeliverError: class extends Error {},
+		deliveryCount: async () => 0,
 		getIntegrationForUI: async () => null,
 		deleteIntegration: async () => ({ deleted: false, recordingIds: [] }),
 		saveIntegration: async (input: { kind: string }) => {
@@ -27,10 +29,12 @@ vi.mock('#lib/server/integrations/index.ts', () => {
 		},
 		testIntegration: async (kind: string) => {
 			tested.push(kind);
-			return `${kind} ok`;
+			return { target: `${kind}.md`, state: 'new', heading: 'Notes' };
 		}
 	};
 });
+vi.mock('#lib/server/db/index.ts', () => ({ db: {} }));
+vi.mock('#lib/server/settings.ts', () => ({ getSettings: async () => ({ timezone: 'UTC' }) }));
 vi.mock('#lib/server/pipeline.ts', () => ({ settleAfterIntegrationDelete: async () => {} }));
 
 const { actions } = await import('./+page.server.ts');

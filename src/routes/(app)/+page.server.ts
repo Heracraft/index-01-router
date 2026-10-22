@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { fail } from '@sveltejs/kit';
 import { and, count, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
-import { deliveries, recordings } from '#lib/server/db/schema.ts';
+import { recordings } from '#lib/server/db/schema.ts';
 import { createRecording } from '#lib/server/ingest.ts';
 import { formatCursor, parseCursor } from '#lib/server/cursor.ts';
+import { webhookUrl } from '#lib/server/origin.ts';
 import { getSettings } from '#lib/server/settings.ts';
 import {
+	dayKey,
 	firstLine,
 	parseLanguages,
 	PENDING_STATUSES,
@@ -48,6 +50,7 @@ export const load: PageServerLoad = async ({ url }) => {
 				Number
 			),
 			failed: sql<number>`count(*) filter (where ${recordings.status} = 'failed')`.mapWith(Number),
+			done: sql<number>`count(*) filter (where ${recordings.status} = 'done')`.mapWith(Number),
 			pending:
 				sql<number>`count(*) filter (where ${inArray(recordings.status, PENDING_STATUSES)})`.mapWith(
 					Number
@@ -56,7 +59,26 @@ export const load: PageServerLoad = async ({ url }) => {
 		})
 		.from(recordings);
 
-	const [{ matching }] = await db.select({ matching: count() }).from(recordings).where(where);
+	// Recordings per day this week, Monday first, in the general timezone
+	const dayExpr = sql<string>`to_char(${recordings.recordedAt} at time zone ${timezone}, 'YYYY-MM-DD')`;
+	const perDay = await db
+		.select({ day: dayExpr, n: count() })
+		.from(recordings)
+		.where(sql`${recordings.recordedAt} >= ${week.toISOString()}::timestamptz`)
+		.groupBy(sql`1`);
+	const byDay = new Map(perDay.map((d) => [d.day, d.n]));
+	const weekDays: { label: string; count: number }[] = [];
+	const todayKey = dayKey(now, timezone);
+	for (let i = 0; i < 7; i++) {
+		// Noon of each day steps cleanly over DST changes
+		const at = new Date(week.getTime() + i * 86400_000 + 12 * 3600_000);
+		const key = dayKey(at, timezone);
+		const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: timezone })
+			.format(at)
+			.slice(0, 3);
+		weekDays.push({ label: weekday, count: byDay.get(key) ?? 0 });
+		if (key === todayKey) break;
+	}
 
 	const rows = await db
 		.select({
@@ -67,14 +89,32 @@ export const load: PageServerLoad = async ({ url }) => {
 			durationMs: recordings.durationMs,
 			status: recordings.status,
 			error: recordings.error,
+			attempts: recordings.attempts,
 			languages: recordings.languages,
 			cursorAt,
 			// The list shows one line; the full text stays on the detail page
 			head: sql<string | null>`left(${recordings.transcript}, 400)`,
-			failedDeliveries: sql<number>`(
-				select count(*) from ${deliveries}
-				where ${deliveries.recordingId} = ${recordings.id} and ${deliveries.status} = 'failed'
-			)`.mapWith(Number)
+			// Drizzle leaves columns unqualified in a one-table select, so the subqueries name theirs
+			failedTargets: sql<string[] | null>`(
+				select array_agg(i.name order by d.created_at)
+				from deliveries d join integrations i on i.id = d.integration_id
+				where d.recording_id = "recordings"."id" and d.status = 'failed'
+			)`,
+			failedError: sql<string | null>`(
+				select d.error from deliveries d
+				where d.recording_id = "recordings"."id" and d.status = 'failed'
+				order by d.created_at limit 1
+			)`,
+			// Deliveries in flight: the highest attempt and its last error, for a retrying row
+			deliveryAttempt: sql<number>`coalesce((
+				select max(d.attempts) from deliveries d
+				where d.recording_id = "recordings"."id" and d.status = 'pending'
+			), 0)`.mapWith(Number),
+			deliveryError: sql<string | null>`(
+				select d.error from deliveries d
+				where d.recording_id = "recordings"."id" and d.status = 'pending' and d.error is not null
+				order by d.attempts desc limit 1
+			)`
 		})
 		.from(recordings)
 		.where(
@@ -96,11 +136,14 @@ export const load: PageServerLoad = async ({ url }) => {
 		filter,
 		before: before ? new Date(before.at) : null,
 		nextCursor: more && last ? formatCursor(last.cursorAt, last.id) : null,
-		matching,
 		stats,
+		weekDays,
+		// The empty state shows it, so the first recording is one paste away
+		webhookUrl: stats.total === 0 ? webhookUrl(url) : null,
 		// eslint-disable-next-line @typescript-eslint/no-unused-vars
-		recordings: rows.map(({ head, languages, cursorAt, ...r }) => ({
+		recordings: rows.map(({ head, languages, cursorAt, failedTargets, ...r }) => ({
 			...r,
+			failedTargets: failedTargets ?? [],
 			line: firstLine(head, 200),
 			languages: parseLanguages(languages)
 		}))

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	fmtSkew,
 	hasSignatureHeaders,
 	precheckIndexHeaders,
 	verifyIndexSignature,
@@ -84,10 +85,16 @@ describe('verifyIndexWebhook', () => {
 		).toBe(true);
 		expect(
 			verifyIndexWebhook(fixtureAHeaders(), body, secret, { nowSec: FIXTURE_A.timestamp + 301 })
-		).toMatchObject({ ok: false, reason: 'timestamp outside tolerance' });
+		).toMatchObject({ ok: false, reason: 'timestamp 5 min behind' });
 		expect(
 			verifyIndexWebhook(fixtureAHeaders(), body, secret, { nowSec: FIXTURE_A.timestamp - 301 })
-		).toMatchObject({ ok: false, reason: 'timestamp outside tolerance' });
+		).toMatchObject({ ok: false, reason: 'timestamp 5 min ahead' });
+	});
+
+	it('names the clock difference', () => {
+		expect(fmtSkew(9 * 3600 + 2 * 60)).toBe('9 h 2 min ahead');
+		expect(fmtSkew(-6 * 60)).toBe('6 min behind');
+		expect(fmtSkew(2 * 3600)).toBe('2 h ahead');
 	});
 
 	it('rejects missing headers, bad version, malformed timestamp, empty secret', () => {
@@ -155,7 +162,7 @@ describe('verifyIndexWebhook', () => {
 		expect(verifyIndexSignature(pre, body, secret)).toMatchObject({ reason: 'bad signature' });
 		expect(
 			precheckIndexHeaders(fixtureAHeaders(), secret, { nowSec: FIXTURE_A.timestamp + 301 })
-		).toMatchObject({ ok: false, status: 401, reason: 'timestamp outside tolerance' });
+		).toMatchObject({ ok: false, status: 401, reason: 'timestamp 5 min behind' });
 		expect(precheckIndexHeaders(fixtureAHeaders(), '', { nowSec: now })).toMatchObject({
 			ok: false,
 			reason: 'no signing secret configured'

@@ -12,6 +12,7 @@ export const load: PageServerLoad = async () => {
 			.selectDistinctOn([deliveries.integrationId], {
 				integrationId: deliveries.integrationId,
 				status: deliveries.status,
+				target: deliveries.target,
 				at: deliveries.updatedAt,
 				recordingId: deliveries.recordingId
 			})

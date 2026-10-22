@@ -1,12 +1,18 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, count, eq } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { deliveries, integrations, type Integration } from '../db/schema.ts';
 import { decrypt, encrypt, isEncrypted } from '../crypto.ts';
 import { obsidian } from './obsidian.ts';
-import type { FieldSpec, IntegrationKind } from './types.ts';
+import { triggerLabel } from '../../format.ts';
+import {
+	IntegrationInputError,
+	type FieldSpec,
+	type IntegrationKind,
+	type TestResult
+} from './types.ts';
 
-export { DeliverError } from './types.ts';
-export type { IntegrationKind, FieldSpec } from './types.ts';
+export { DeliverError, IntegrationInputError } from './types.ts';
+export type { IntegrationKind, FieldSpec, TestResult } from './types.ts';
 
 export type Kind = IntegrationKind['kind'];
 
@@ -18,18 +24,12 @@ export type Trigger = (typeof TRIGGERS)[number];
 
 export const isKind = (kind: string): kind is Kind => Object.hasOwn(kinds, kind);
 
-/** Thrown for input the UI should show next to the form */
-export class IntegrationInputError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = 'IntegrationInputError';
-	}
-}
-
 /** An integration as the browser may see it: secrets blanked, `secretsSet` says which are stored */
 export type IntegrationView = Omit<Integration, 'config'> & {
 	config: Record<string, unknown>;
 	secretsSet: Record<string, boolean>;
+	/** Stored secrets no key in AUTH_SECRET or AUTH_SECRET_PREVIOUS opens */
+	secretsLost: Record<string, boolean>;
 };
 
 function kindOf(kind: string): IntegrationKind {
@@ -71,12 +71,15 @@ function toView(row: Integration): IntegrationView {
 	const kind = kinds[row.kind as Kind];
 	const config = { ...row.config };
 	const secretsSet: Record<string, boolean> = {};
+	const secretsLost: Record<string, boolean> = {};
 	for (const key of kind?.secrets ?? []) {
-		// A secret AUTH_SECRET can no longer open shows as unset, so the form asks for it again
-		secretsSet[key] = secretUsable(config[key]);
+		// A secret AUTH_SECRET can no longer open shows as unset and lost, so the form asks again
+		const v = config[key];
+		secretsSet[key] = secretUsable(v);
+		secretsLost[key] = typeof v === 'string' && isEncrypted(v) && !secretsSet[key];
 		config[key] = '';
 	}
-	return { ...row, config, secretsSet };
+	return { ...row, config, secretsSet, secretsLost };
 }
 
 /** Integrations holding a secret that no key in AUTH_SECRET or AUTH_SECRET_PREVIOUS opens */
@@ -116,7 +119,9 @@ export function normalizeConfig(fields: FieldSpec[], input: Record<string, unkno
 function normalizeTriggers(triggers: unknown): Trigger[] {
 	const list = Array.isArray(triggers) ? triggers.map(String) : [];
 	const bad = list.filter((t) => !(TRIGGERS as readonly string[]).includes(t));
-	if (bad.length) throw new IntegrationInputError(`Unknown trigger: ${bad.join(', ')}`);
+	if (bad.length) {
+		throw new IntegrationInputError(`Unknown trigger: ${bad.join(', ')}`, { field: 'triggers' });
+	}
 	return [...new Set(list)] as Trigger[];
 }
 
@@ -167,15 +172,20 @@ function withStoredSecrets(
 	return out;
 }
 
-function missingRequired(kind: IntegrationKind, config: Record<string, unknown>) {
-	return kind.fields.filter((f) => f.required && (config[f.key] === '' || config[f.key] == null));
+/** Required fields first, then the kind's own rules. Throws for the first field at fault */
+function checkConfig(kind: IntegrationKind, config: Record<string, unknown>) {
+	const missing = kind.fields.find(
+		(f) => f.required && (config[f.key] === '' || config[f.key] == null)
+	);
+	if (missing) throw new IntegrationInputError('Required.', { field: missing.key });
+	kind.validate?.(config);
 }
 
 /** Inserts or updates. A blank secret keeps the stored one. Returns the row, secrets decrypted */
 export async function saveIntegration(input: SaveIntegrationInput): Promise<Integration> {
 	const kind = kindOf(input.kind);
 	const name = input.name?.trim();
-	if (!name) throw new IntegrationInputError('Name is required');
+	if (!name) throw new IntegrationInputError('Required.', { field: 'name' });
 	const triggers = normalizeTriggers(input.triggers);
 	const existing = input.id ? await getIntegration(input.id) : null;
 	if (input.id && !existing) throw new IntegrationInputError('Integration not found');
@@ -188,10 +198,7 @@ export async function saveIntegration(input: SaveIntegrationInput): Promise<Inte
 		normalizeConfig(kind.fields, input.config ?? {}),
 		existing
 	);
-	const missing = missingRequired(kind, config);
-	if (missing.length) {
-		throw new IntegrationInputError(`${missing.map((f) => f.label).join(', ')} required`);
-	}
+	checkConfig(kind, config);
 	const stored = { ...config };
 	for (const key of kind.secrets) {
 		if (typeof stored[key] === 'string' && stored[key])
@@ -231,21 +238,34 @@ export async function deleteIntegration(
 
 /**
  * Checks a config without saving it. With `id`, blank secrets come from that stored row.
- * Resolves to the kind's one line summary, rejects with DeliverError (or IntegrationInputError).
+ * Resolves to what the kind found, rejects with DeliverError (or IntegrationInputError).
  */
 export async function testIntegration(
 	kindName: string,
 	config: Record<string, unknown>,
-	id?: string
-): Promise<string> {
+	id: string | undefined,
+	timeZone: string
+): Promise<TestResult> {
 	const kind = kindOf(kindName);
 	const stored = id ? await getIntegration(id) : null;
 	const full = withStoredSecrets(kind, normalizeConfig(kind.fields, config ?? {}), stored);
-	const missing = missingRequired(kind, full);
-	if (missing.length) {
-		throw new IntegrationInputError(`${missing.map((f) => f.label).join(', ')} required`);
-	}
-	return kind.test(full);
+	checkConfig(kind, full);
+	return kind.test(full, { timeZone });
+}
+
+/** Deliveries on record for an integration, for its delete dialog */
+export async function deliveryCount(id: string): Promise<number> {
+	const [row] = await db
+		.select({ n: count() })
+		.from(deliveries)
+		.where(eq(deliveries.integrationId, id));
+	return row?.n ?? 0;
+}
+
+/** Why a delivery was skipped, as the deliveries table shows it: "Off", "Takes single click" */
+export function skipReason(integration: Pick<Integration, 'enabled' | 'triggers'> | undefined) {
+	if (!integration || !integration.enabled || !integration.triggers.length) return 'Off';
+	return `Takes ${integration.triggers.map((t) => triggerLabel(t).toLowerCase()).join(' or ')}`;
 }
 
 /** Enabled, and listening to `trigger` (an empty trigger list means all) */

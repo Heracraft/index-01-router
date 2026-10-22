@@ -24,6 +24,14 @@ export interface IndexSignedHeaders {
 export type IndexPrecheckResult =
 	({ ok: true } & IndexSignedHeaders) | { ok: false; status: 400 | 401; reason: string };
 
+/** Clock difference in whole minutes, hours from an hour on: "9 h 2 min ahead", "6 min behind" */
+export function fmtSkew(seconds: number) {
+	const min = Math.round(Math.abs(seconds) / 60);
+	const text =
+		min >= 60 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`;
+	return `${text} ${seconds > 0 ? 'ahead' : 'behind'}`;
+}
+
 /**
  * The checks that need only the headers: version, presence, secret, timestamp window and
  * signature format. Run it before reading the body so unsigned junk is rejected cheaply.
@@ -48,7 +56,7 @@ export function precheckIndexHeaders(
 	if (!/^\d{1,12}$/.test(tsText)) return { ok: false, status: 400, reason: 'malformed timestamp' };
 	const timestamp = Number(tsText);
 	if (Math.abs(now - timestamp) > tolerance)
-		return { ok: false, status: 401, reason: 'timestamp outside tolerance' };
+		return { ok: false, status: 401, reason: `timestamp ${fmtSkew(timestamp - now)}` };
 	if (!/^[0-9a-f]{64}$/.test(sig)) return { ok: false, status: 401, reason: 'malformed signature' };
 	return { ok: true, version, sig, tsText, deliveryId, trigger, isTest, timestamp };
 }

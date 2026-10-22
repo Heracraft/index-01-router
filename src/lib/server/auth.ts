@@ -111,11 +111,32 @@ export function safeNext(value: string | null | undefined) {
 	}
 }
 
-async function configOrSignInError(): Promise<client.Configuration> {
+/** Details for the sign-in page's error line, signed so the email in it cannot be forged */
+export interface SignInError {
+	code: string;
+	email?: string;
+	/** Identity provider host, for idp errors */
+	host?: string;
+}
+
+function setSignInError(event: RequestEvent, error: SignInError) {
+	event.cookies.set(ERROR_COOKIE, sign(error), { ...cookieOpts(event.url), maxAge: 600 });
+}
+
+const issuerHost = () => {
+	try {
+		return new URL(OIDC_ISSUER).host;
+	} catch {
+		return undefined;
+	}
+};
+
+async function configOrSignInError(event: RequestEvent): Promise<client.Configuration> {
 	try {
 		return await getConfig();
 	} catch (e) {
 		console.error('OIDC discovery failed', e);
+		setSignInError(event, { code: 'idp', host: issuerHost() });
 		redirect(303, '/auth/signin?error=idp');
 	}
 }
@@ -137,16 +158,23 @@ async function endSessionUrl(event: RequestEvent, idToken: string | undefined) {
 	}
 }
 
-/** Error code for the sign-in page, from ?error= or from the cookie set before an IdP logout */
-export function signInError(event: RequestEvent) {
-	const fromCookie = event.cookies.get(ERROR_COOKIE);
-	if (fromCookie) event.cookies.delete(ERROR_COOKIE, { path: '/' });
-	return event.url.searchParams.get('error') ?? fromCookie ?? null;
+/**
+ * The sign-in page's error: code from ?error= or the cookie, with the email or host the cookie
+ * carries. The cookie survives the identity provider's logout, which drops query parameters,
+ * and keeps the email out of URLs and access logs
+ */
+export function signInError(event: RequestEvent): SignInError | null {
+	const raw = event.cookies.get(ERROR_COOKIE);
+	if (raw) event.cookies.delete(ERROR_COOKIE, { path: '/' });
+	const fromCookie = verify<SignInError>(raw);
+	const code = event.url.searchParams.get('error') ?? fromCookie?.code ?? null;
+	if (!code) return null;
+	return fromCookie?.code === code ? fromCookie : { code };
 }
 
 export async function signIn(event: RequestEvent): Promise<never> {
 	const form = await event.request.formData().catch(() => null);
-	const config = await configOrSignInError();
+	const config = await configOrSignInError(event);
 	const code_verifier = client.randomPKCECodeVerifier();
 	const code_challenge = await client.calculatePKCECodeChallenge(code_verifier);
 	const state = client.randomState();
@@ -173,7 +201,7 @@ export async function callback(event: RequestEvent): Promise<never> {
 	);
 	event.cookies.delete(FLOW_COOKIE, { path: '/' });
 	if (!flow || flow.exp < Date.now()) redirect(303, '/auth/signin');
-	const config = await configOrSignInError();
+	const config = await configOrSignInError(event);
 
 	// Same redirect_uri as signIn sent, which openid-client builds from origin and path
 	const callbackUrl = new URL(event.url.pathname + event.url.search, appOrigin(event.url));
@@ -212,11 +240,9 @@ export async function callback(event: RequestEvent): Promise<never> {
 	if (denial) {
 		// End the IdP session too, or the next sign-in logs the same account straight back in
 		const logout = await endSessionUrl(event, tokens.id_token);
-		if (logout) {
-			event.cookies.set(ERROR_COOKIE, denial, { ...cookieOpts(event.url), maxAge: 600 });
-			redirect(303, logout, { external: true });
-		}
-		redirect(303, `/auth/signin?error=${denial}`);
+		setSignInError(event, { code: denial, email });
+		if (logout) redirect(303, logout, { external: true });
+		redirect(303, '/auth/signin');
 	}
 
 	setSession(event, {

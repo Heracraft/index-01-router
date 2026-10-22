@@ -7,8 +7,18 @@ import {
 	StreamableHTTPClientTransport,
 	StreamableHTTPError
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { DeliverError, type DeliverContext, type IntegrationKind } from './types.ts';
-import { renderEntry, renderNotePath, renderTemplate, type TemplateVars } from './template.ts';
+import {
+	DeliverError,
+	IntegrationInputError,
+	type DeliverContext,
+	type IntegrationKind
+} from './types.ts';
+import {
+	renderEntry,
+	renderNotePath,
+	renderTemplate,
+	type TemplateVars
+} from '../../notes/template.ts';
 
 export interface ObsidianConfig {
 	url: string;
@@ -122,14 +132,22 @@ const NETWORK_CODES = new Set([
 
 const TLS_CODES = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ERR_TLS/;
 
-/** Maps transport and protocol errors to DeliverError */
+const hostOf = (url: string) => {
+	try {
+		return new URL(url).host;
+	} catch {
+		return url;
+	}
+};
+
+/** Maps transport and protocol errors to DeliverError, tagged with the form field at fault */
 export function toDeliverError(e: unknown, url: string): DeliverError {
 	if (e instanceof DeliverError) return e;
 	if (e instanceof StreamableHTTPError) {
 		const code = e.code ?? 0;
 		if (code === 401 || code === 403)
-			return new DeliverError('Obsidian rejected the API key', false);
-		if (code === 404) return new DeliverError(`No MCP endpoint at ${url}`, false);
+			return new DeliverError('Obsidian rejected the API key', false, 'apiKey');
+		if (code === 404) return new DeliverError(`No MCP endpoint at ${url}`, false, 'url');
 		const retryable = code === 408 || code === 429 || code >= 500 || code === 0;
 		return new DeliverError(`Obsidian answered ${code || 'with an error'}`, retryable);
 	}
@@ -137,15 +155,17 @@ export function toDeliverError(e: unknown, url: string): DeliverError {
 	const code = String(err?.cause?.code ?? err?.code ?? '');
 	if (TLS_CODES.test(code)) {
 		return new DeliverError(
-			`TLS check failed (${code}). Turn on insecure TLS for a self-signed cert`,
-			false
+			`Self-signed certificate at ${hostOf(url)} (${code}). Tick Accept a self-signed certificate.`,
+			false,
+			'insecureTls'
 		);
 	}
-	if (NETWORK_CODES.has(code)) return new DeliverError(`Cannot reach ${url} (${code})`, true);
+	if (NETWORK_CODES.has(code))
+		return new DeliverError(`Cannot reach ${url} (${code})`, true, 'url');
 	if (err?.name === 'AbortError' || err?.name === 'TimeoutError' || code === '-32001') {
-		return new DeliverError('Obsidian did not answer in time', true);
+		return new DeliverError('Obsidian did not answer in time', true, 'url');
 	}
-	if (err?.message === 'fetch failed') return new DeliverError(`Cannot reach ${url}`, true);
+	if (err?.message === 'fetch failed') return new DeliverError(`Cannot reach ${url}`, true, 'url');
 	return new DeliverError(err?.message || String(e), true);
 }
 
@@ -307,9 +327,9 @@ export async function connect(
 	try {
 		url = new URL(config.url);
 	} catch {
-		throw new DeliverError(`Not a URL: ${config.url}`, false);
+		throw new DeliverError(`Not a URL: ${config.url}`, false, 'url');
 	}
-	if (!config.apiKey) throw new DeliverError('API key is not set', false);
+	if (!config.apiKey) throw new DeliverError('API key is not set', false, 'apiKey');
 	const transport = new StreamableHTTPClientTransport(url, {
 		requestInit: { headers: { Authorization: `Bearer ${config.apiKey}` } },
 		fetch: config.insecureTls ? insecureFetch : undefined
@@ -466,43 +486,29 @@ export const obsidian: IntegrationKind = {
 	kind: 'obsidian',
 	label: 'Obsidian',
 	fields: [
-		{
-			key: 'url',
-			label: 'MCP URL',
-			type: 'url',
-			default: OBSIDIAN_DEFAULTS.url,
-			hint: 'Ends in /mcp/',
-			required: true
-		},
+		{ key: 'url', label: 'MCP URL', type: 'url', default: OBSIDIAN_DEFAULTS.url, required: true },
 		{ key: 'apiKey', label: 'API key', type: 'secret', required: true },
 		{
 			key: 'insecureTls',
 			label: 'Accept a self-signed certificate',
 			type: 'boolean',
-			default: false,
-			hint: 'Plugin on port 27124'
+			default: false
 		},
-		{
-			key: 'notePath',
-			label: 'Note path',
-			type: 'text',
-			default: OBSIDIAN_DEFAULTS.notePath,
-			hint: 'Relative to the vault root'
-		},
+		{ key: 'notePath', label: 'Note path', type: 'text', default: OBSIDIAN_DEFAULTS.notePath },
 		{ key: 'heading', label: 'Heading', type: 'text', default: OBSIDIAN_DEFAULTS.heading },
 		{
 			key: 'entryTemplate',
 			label: 'Entry',
 			type: 'textarea',
 			default: OBSIDIAN_DEFAULTS.entryTemplate,
-			hint: '{{time:HH:mm}} {{transcript}} {{languages}} {{trigger}} {{duration}}'
+			tokens: ['time:HH:mm', 'transcript', 'languages', 'trigger', 'duration']
 		},
 		{
 			key: 'newNoteTemplate',
 			label: 'New note',
 			type: 'textarea',
 			default: OBSIDIAN_DEFAULTS.newNoteTemplate,
-			hint: 'Used when the note is missing. {{heading}} {{date:YYYY-MM-DD}}'
+			tokens: ['heading', 'date:YYYY-MM-DD']
 		}
 	],
 	secrets: ['apiKey'],
@@ -549,21 +555,46 @@ export const obsidian: IntegrationKind = {
 		});
 	},
 
-	async test(raw) {
+	validate(raw) {
+		const { url } = obsidianConfig(raw);
+		let path: string;
+		try {
+			path = new URL(url).pathname;
+		} catch {
+			throw new IntegrationInputError('Must start with http:// or https://.', { field: 'url' });
+		}
+		if (!/\/mcp\/?$/.test(path)) {
+			throw new IntegrationInputError('Must end in /mcp/.', { field: 'url' });
+		}
+	},
+
+	async test(raw, ctx) {
 		const config = obsidianConfig(raw);
+		let target: string;
+		try {
+			target = renderNotePath(config.notePath, {
+				recordedAt: ctx.now ?? new Date(),
+				timeZone: ctx.timeZone || 'UTC'
+			});
+		} catch (e) {
+			throw new DeliverError((e as Error).message, false, 'notePath');
+		}
 		const session = await connect(config, AbortSignal.timeout(CALL_TIMEOUT_MS));
 		try {
 			const { tools } = await session.client.listTools();
 			if (!tools.some((t) => t.name === 'vault_patch')) {
-				throw new DeliverError(`Connected, but the server has no vault_patch tool`, false);
+				throw new DeliverError(
+					`No vault_patch tool at ${hostOf(config.url)}. Update the Local REST API plugin.`,
+					false,
+					'url'
+				);
 			}
-			const list = await session.call('vault_list', {});
-			const entries = list.isError
-				? null
-				: (parseJson<{ files?: string[] }>(list, 'list').files ?? []).length;
-			return entries === null
-				? `Connected, ${tools.length} tools`
-				: `Connected, ${tools.length} tools, ${entries} ${entries === 1 ? 'entry' : 'entries'} at the vault root`;
+			const map = await session.call('vault_get_document_map', { path: target });
+			if (isMissingFile(map)) return { target, state: 'new', heading: config.heading };
+			check(map, `Could not read ${target}`);
+			const doc = parseJson<DocumentMap>(map, 'document map');
+			const found = findHeadingPath(doc.headings, config.heading);
+			return { target, state: found ? 'heading' : 'note', heading: config.heading };
 		} catch (e) {
 			throw toDeliverError(e, config.url);
 		} finally {

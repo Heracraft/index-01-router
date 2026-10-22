@@ -74,6 +74,4 @@ export interface Provider {
 		settings: TranscriptionSettings,
 		ctx: RequestContext
 	): Promise<ChunkReply>;
-	/** One cheap request. Resolves to a one line summary, throws TranscribeError */
-	test(settings: TranscriptionSettings, ctx: RequestContext): Promise<string>;
 }

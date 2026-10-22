@@ -229,10 +229,3 @@ export function firstLine(text: string | null | undefined, max = 160) {
 	const space = cut.lastIndexOf(' ');
 	return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`;
 }
-
-/** Status code class for badges: ok 2xx, warn 4xx, err 5xx and anything else */
-export function httpTone(status: number): 'ok' | 'warn' | 'err' {
-	if (status >= 200 && status < 300) return 'ok';
-	if (status >= 400 && status < 500) return 'warn';
-	return 'err';
-}

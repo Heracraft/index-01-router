@@ -17,3 +17,6 @@ if (PUBLIC_URL && !publicOrigin) console.warn(`PUBLIC_URL is not an http(s) URL:
 
 /** PUBLIC_URL's origin when set, else the origin adapter-node derived for the request */
 export const appOrigin = (url: URL) => publicOrigin ?? url.origin;
+
+/** Where the Index 01 app posts recordings */
+export const webhookUrl = (url: URL) => `${appOrigin(url).replace(/\/+$/, '')}/api/index01/webhook`;

@@ -26,9 +26,25 @@ export interface FieldSpec {
 	label: string;
 	type: 'text' | 'url' | 'secret' | 'textarea' | 'boolean';
 	default?: string | boolean;
-	/** One short constraint, shown under the field. Optional */
-	hint?: string;
+	placeholder?: string;
+	/** Placeholders offered as insert chips under a textarea, e.g. 'time:HH:mm' */
+	tokens?: string[];
 	required?: boolean;
+}
+
+/** What a connection test found: the note a delivery today would write to, and its state */
+export interface TestResult {
+	target: string;
+	/** heading: note and heading exist; note: note exists without the heading; new: no note yet */
+	state: 'heading' | 'note' | 'new';
+	/** The heading looked for */
+	heading: string;
+}
+
+/** Context a test needs beyond the config */
+export interface TestContext {
+	timeZone: string;
+	now?: Date;
 }
 
 export interface IntegrationKind {
@@ -38,15 +54,33 @@ export interface IntegrationKind {
 	/** Keys of fields stored encrypted */
 	secrets: string[];
 	deliver(ctx: DeliverContext): Promise<DeliverResult>;
-	/** Checks the connection and returns a one line description of what was found */
-	test(config: Record<string, unknown>): Promise<string>;
+	/** Input rules beyond required fields. Throws IntegrationInputError naming the field */
+	validate?(config: Record<string, unknown>): void;
+	/** Checks the connection and reports the note today's delivery would write to */
+	test(config: Record<string, unknown>, ctx: TestContext): Promise<TestResult>;
 }
+
+/** Form fields an error can point at */
+export type FieldKey = string;
 
 /** Plain field, not a parameter property: Node's type stripping rejects those */
 export class DeliverError extends Error {
 	readonly retryable: boolean;
-	constructor(message: string, retryable: boolean) {
+	/** The form field the error is about, when there is one */
+	readonly field: FieldKey | undefined;
+	constructor(message: string, retryable: boolean, field?: FieldKey) {
 		super(message);
 		this.retryable = retryable;
+		this.field = field;
+	}
+}
+
+/** Thrown for input the UI shows under `field` (or by the buttons without one) */
+export class IntegrationInputError extends Error {
+	readonly field: FieldKey | undefined;
+	constructor(message: string, opts: { field?: FieldKey } = {}) {
+		super(message);
+		this.name = 'IntegrationInputError';
+		this.field = opts.field;
 	}
 }

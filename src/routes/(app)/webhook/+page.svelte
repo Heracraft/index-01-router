@@ -3,10 +3,12 @@
 	import { enhance } from '$app/forms';
 	import ConfirmAction from '#lib/components/ConfirmAction.svelte';
 	import CopyButton from '#lib/components/CopyButton.svelte';
+	import FilterTabs from '#lib/components/FilterTabs.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import PageHead from '#lib/components/PageHead.svelte';
+	import Signal from '#lib/components/Signal.svelte';
 	import Trigger from '#lib/components/Trigger.svelte';
-	import { dayKey, formatBytes, formatDay, formatTime, httpTone } from '#lib/format.ts';
+	import { dayKey, formatBytes, formatDay, formatTime } from '#lib/format.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -23,6 +25,27 @@
 			showDay: i === 0 || dayKey(e.at, tz) !== dayKey(data.events[i - 1].at, tz)
 		}))
 	);
+
+	const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+	/** Result column: nothing for the usual outcome, the reason otherwise */
+	const resultOf = (e: { reason: string; test: boolean }) =>
+		e.reason === 'stored' || e.test
+			? ''
+			: e.reason === 'stored transcription'
+				? 'Transcript only'
+				: capital(e.reason);
+
+	// The newest request: has the app reached this URL, and with the current secret?
+	const lastAt = $derived(
+		data.last
+			? (dayKey(data.last.at, tz) === dayKey(new Date(), tz)
+					? ''
+					: `${formatDay(data.last.at, tz)}, `) + formatTime(data.last.at, tz, true)
+			: ''
+	);
+	const waiting = $derived(
+		!!data.rotatedAt && (!data.last || new Date(data.rotatedAt) > new Date(data.last.at))
+	);
 </script>
 
 <PageHead title="Webhook" />
@@ -38,13 +61,29 @@
 			<span>{data.webhookUrl}</span>
 			<CopyButton text={data.webhookUrl} label="Copy" />
 		</div>
+		<p class="last" role="status">
+			{#if waiting}
+				<Signal tone="warn" label="Waiting for a signed request" />
+			{:else if data.last && data.last.status < 300}
+				<Signal tone="ok" label={lastAt}>
+					{#if resultOf(data.last)}<span class="muted">· {resultOf(data.last)}</span>{/if}
+					{#if data.last.test}<span class="muted">· Test event</span>{/if}
+				</Signal>
+			{:else if data.last}
+				<Signal tone="err" label={lastAt}>
+					<span>· {capital(data.last.reason)}</span>
+				</Signal>
+			{:else}
+				<Signal tone="idle" label="No requests yet" />
+			{/if}
+		</p>
 	</div>
 
 	<div>
 		<span class="hk-field-label" id="secret-label">Signing secret</span>
 		<div class="hk-secret" aria-labelledby="secret-label">
 			{#if data.secretLocked}
-				<span class="lock" title="Set by INDEX01_WEBHOOK_SECRET"><Icon name="lock" /></span>
+				<span class="env"><Icon name="lock" /><span>INDEX01_WEBHOOK_SECRET</span></span>
 			{/if}
 			<span class:dim={!revealed}>{revealed ?? masked}</span>
 			{#if revealed}
@@ -67,10 +106,8 @@
 				</form>
 			{/if}
 		</div>
-		<div class="secret-foot">
-			{#if data.secretLocked}
-				<span class="env">From <span class="hk-mono">INDEX01_WEBHOOK_SECRET</span></span>
-			{:else}
+		{#if !data.secretLocked}
+			<div class="secret-foot">
 				<ConfirmAction
 					action="?/rotate"
 					label="Rotate secret"
@@ -78,13 +115,10 @@
 					triggerClass="hk-btn-secondary hk-btn-sm"
 					confirmLabel="Rotate secret"
 				>
-					<p>
-						Replace the signing secret ending in <span class="hk-mono">{data.secretHint}</span>? The
-						ring app gets 401 until you paste the new one into it.
-					</p>
+					<p>Requests signed with <span class="hk-mono">…{data.secretHint}</span> get 401.</p>
 				</ConfirmAction>
-			{/if}
-		</div>
+			</div>
+		{/if}
 	</div>
 
 	<form
@@ -106,52 +140,68 @@
 	</form>
 </div>
 
-<section>
-	<div class="sec-head">
-		<h2>Recent requests</h2>
-	</div>
+{#if data.counts.all > 0}
+	<section>
+		<div class="sec-head">
+			<h2>Recent requests</h2>
+			<FilterTabs
+				label="Filter requests"
+				items={[
+					{ value: 'all', label: 'All', count: data.counts.all },
+					{ value: 'rejected', label: 'Rejected', count: data.counts.rejected, tone: 'err' }
+				]}
+				current={data.show}
+				href={(v) => `${resolve('/(app)/webhook')}${v === 'all' ? '' : '?show=rejected'}`}
+			/>
+		</div>
 
-	{#if rows.length === 0}
-		<div class="hk-empty-row"><span>No requests yet.</span></div>
-	{:else}
-		<ul class="log" aria-label="Recent webhook requests">
-			<li class="log-head" aria-hidden="true">
-				<span>Time</span><span>Status</span><span>Trigger</span><span>Delivery</span><span
-					class="num">Size</span
-				><span>Result</span>
-			</li>
-			{#each rows as e (e.id)}
-				<li class="log-row">
-					<span class="time hk-num">
-						{#if e.showDay}<span class="day">{formatDay(e.at, tz)}</span>{/if}
-						{formatTime(e.at, tz, true)}
-					</span>
-					<span class="status">
-						<span class="hk-badge hk-badge--mono hk-badge--{httpTone(e.status)}">{e.status}</span>
-					</span>
-					<span class="trigger">
-						<Trigger trigger={e.test ? 'test-event' : e.trigger} />
-					</span>
-					<span class="delivery hk-mono">
-						{#if e.recordingId}
-							<a href={resolve('/(app)/recordings/[id]', { id: e.recordingId })}
-								>{e.deliveryId ?? 'Recording'}</a
-							>
-						{:else}
-							{e.deliveryId ?? ''}
-						{/if}
-					</span>
-					<span class="bytes num hk-num">{e.bytes ? formatBytes(e.bytes) : ''}</span>
-					<span class="reason" class:bad={e.status >= 300}
-						>{e.reason.charAt(0).toUpperCase() + e.reason.slice(1)}
-						{#if !e.signed && e.status < 300}<span class="hk-badge hk-badge--outline">Unsigned</span
-							>{/if}</span
-					>
+		{#if rows.length === 0}
+			<div class="hk-empty-row"><span>No rejected requests.</span></div>
+		{:else}
+			<ul class="log" aria-label="Recent webhook requests">
+				<li class="log-head" aria-hidden="true">
+					<span>Time</span><span>Status</span><span>Trigger</span><span>Delivery</span><span
+						class="num">Size</span
+					><span>Result</span>
 				</li>
-			{/each}
-		</ul>
-	{/if}
-</section>
+				{#each rows as e (e.id)}
+					<li class="log-row">
+						<span class="time hk-num">
+							{#if e.showDay}<span class="day">{formatDay(e.at, tz)}</span>{/if}
+							{formatTime(e.at, tz, true)}
+						</span>
+						<span class="status">
+							{#if e.status < 300}
+								<span class="hk-mono code">{e.status}</span>
+							{:else}
+								<span class="hk-badge hk-badge--mono hk-badge--err">{e.status}</span>
+							{/if}
+						</span>
+						<span class="trigger">
+							<Trigger trigger={e.test ? 'test-event' : e.trigger} />
+						</span>
+						<span class="delivery hk-mono">
+							{#if e.recordingId}
+								<a href={resolve('/(app)/recordings/[id]', { id: e.recordingId })}
+									>{e.deliveryId ?? 'Recording'}</a
+								>
+							{:else}
+								{e.deliveryId ?? ''}
+							{/if}
+						</span>
+						<span class="bytes num hk-num">{e.bytes ? formatBytes(e.bytes) : ''}</span>
+						<span class="reason" class:bad={e.status >= 300}
+							>{resultOf(e)}
+							{#if !e.signed && e.status < 300}<span class="hk-badge hk-badge--outline"
+									>Unsigned</span
+								>{/if}</span
+						>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+{/if}
 
 <style>
 	.hk-secret {
@@ -167,9 +217,27 @@
 		color: var(--hk-text-3);
 		letter-spacing: 0.05em;
 	}
-	.lock {
+	.hk-secret > .env {
 		display: inline-flex;
-		flex: none !important;
+		align-items: center;
+		gap: 0.375rem;
+		flex: none;
+		color: var(--hk-text-2);
+	}
+	.env :global(svg) {
+		color: var(--hk-text-3);
+	}
+	.last {
+		margin: 0.5rem 0 0;
+		font-size: 0.8125rem;
+	}
+	.last :global(.signal) {
+		gap: 0.375rem;
+	}
+	.muted {
+		color: var(--hk-text-3);
+	}
+	.code {
 		color: var(--hk-text-3);
 	}
 	.secret-foot {
@@ -186,7 +254,8 @@
 	}
 	.sec-head {
 		display: flex;
-		align-items: baseline;
+		flex-wrap: wrap;
+		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
 		margin-bottom: 0.75rem;
@@ -196,10 +265,6 @@
 		font-size: 1.25rem;
 		line-height: 1.75rem;
 		letter-spacing: -0.01em;
-	}
-	.caption {
-		font-size: 0.8125rem;
-		color: var(--hk-text-3);
 	}
 
 	.log {

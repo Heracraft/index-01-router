@@ -9,7 +9,6 @@ import {
 	formatDuration,
 	formatElapsed,
 	formatTime,
-	httpTone,
 	isLanguageCode,
 	languageName,
 	parseLanguages,
@@ -90,12 +89,6 @@ describe('numbers', () => {
 		expect(formatBytes(41_200)).toBe('41 KB');
 		expect(formatBytes(3_210_000)).toBe('3.2 MB');
 		expect(formatBytes(24_000_000)).toBe('24 MB');
-	});
-
-	it('picks a tone per status code', () => {
-		expect(httpTone(200)).toBe('ok');
-		expect(httpTone(401)).toBe('warn');
-		expect(httpTone(500)).toBe('err');
 	});
 });
 

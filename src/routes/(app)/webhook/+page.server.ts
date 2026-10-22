@@ -1,5 +1,4 @@
 import { fail } from '@sveltejs/kit';
-import { PUBLIC_URL } from '$app/env/private';
 import {
 	envLocks,
 	getSettings,
@@ -8,15 +7,24 @@ import {
 	setStored
 } from '#lib/server/settings.ts';
 import { listWebhookEvents } from '#lib/server/webhook-log.ts';
+import { webhookUrl } from '#lib/server/origin.ts';
 import type { Actions, PageServerLoad } from './$types';
 
-const PATH = '/api/index01/webhook';
-
 export const load: PageServerLoad = async ({ url }) => {
-	const [settings, events] = await Promise.all([getSettings('webhook'), listWebhookEvents(50)]);
-	const origin = (PUBLIC_URL ?? url.origin).replace(/\/+$/, '');
+	const [settings, all] = await Promise.all([getSettings('webhook'), listWebhookEvents(50)]);
+	const show = url.searchParams.get('show') === 'rejected' ? 'rejected' : 'all';
+	const isRejected = (e: { status: number }) => e.status >= 400;
+	const events = show === 'rejected' ? all.filter(isRejected) : all;
+	const newest = all[0];
 	return {
-		webhookUrl: origin + PATH,
+		webhookUrl: webhookUrl(url),
+		show,
+		counts: { all: all.length, rejected: all.filter(isRejected).length },
+		// The newest request, whatever the filter, for the line under the URL
+		last: newest
+			? { at: newest.at, status: newest.status, reason: newest.reason, test: newest.test }
+			: null,
+		rotatedAt: settings.rotatedAt ?? null,
 		secretLocked: envLocks.webhookSecret,
 		// Masked until Reveal: the last 4 characters identify it against the app's copy
 		secretHint: settings.secret.slice(-4),
@@ -53,7 +61,12 @@ export const actions: Actions = {
 		}
 		const stored = await getStored('webhook');
 		const secret = newWebhookSecret();
-		await setStored('webhook', { ...stored, secret, secretReset: false });
+		await setStored('webhook', {
+			...stored,
+			secret,
+			secretReset: false,
+			rotatedAt: new Date().toISOString()
+		});
 		return { action: 'rotate', secret };
 	},
 	signature: async ({ request }) => {

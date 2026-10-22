@@ -1,10 +1,14 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '$app/forms';
 	import Icon from '#lib/components/Icon.svelte';
 	import PageHead from '#lib/components/PageHead.svelte';
 	import SecretField from '#lib/components/SecretField.svelte';
-	import { isLanguageCode, languageName } from '#lib/format.ts';
+	import Signal from '#lib/components/Signal.svelte';
+	import TestResult from '#lib/components/TestResult.svelte';
+	import { formatElapsed, isLanguageCode, languageName } from '#lib/format.ts';
+	import { formatDate } from '#lib/notes/time.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -15,16 +19,18 @@
 	let openaiBase = $state('');
 	let audioBase = $state('');
 	let languages = $state<string[]>([]);
+	let zone = $state('');
 	// Reset only when the stored values change (a save), not on the reload after a test
 	let seen = '';
 	$effect.pre(() => {
-		const key = JSON.stringify(s);
+		const key = JSON.stringify([s, data.generalTimezone]);
 		if (key === seen) return;
 		seen = key;
 		provider = s.provider;
 		openaiBase = s.openai.baseUrl;
 		audioBase = s.openaiAudio.baseUrl;
 		languages = [...s.languages];
+		zone = data.generalTimezone;
 	});
 
 	const isOpenAI = (url: string) => {
@@ -35,10 +41,22 @@
 		}
 	};
 
-	const errors = $derived<Record<string, string>>(
-		form && 'errors' in form && form.errors ? form.errors : {}
-	);
+	let busy = $state<'save' | 'test' | null>(null);
+	let saved = $state(false);
+	// Anything typed since the last test or save
+	let stale = $state(false);
+
 	const test = $derived(form?.action === 'test' && 'test' in form ? form.test : null);
+	// Field errors from a save or test that failed validation, and the field a failed test names
+	const errors = $derived.by<Record<string, string>>(() => {
+		if (busy) return {};
+		const out: Record<string, string> =
+			form && 'errors' in form && form.errors ? { ...form.errors } : {};
+		if (test && !test.ok && test.field && !stale) out[test.field] = test.message;
+		return out;
+	});
+	const errId = (key: string) => `${key.replace('.', '-')}-error`;
+	const described = (key: string) => (errors[key] ? errId(key) : undefined);
 
 	let langInput = $state('');
 	let langError = $state('');
@@ -46,16 +64,17 @@
 		const code = langInput.trim().toLowerCase();
 		if (!code) return;
 		if (!isLanguageCode(code)) {
-			langError = `Languages: ${code} is not an ISO 639-1 code such as sw or en.`;
+			langError = `${code} is not an ISO 639-1 code such as sw or en.`;
 			return;
 		}
 		if (!languages.includes(code)) languages = [...languages, code];
 		langInput = '';
 		langError = '';
 	}
+	const langPlaceholder = $derived(
+		['sw', 'fr', 'de', 'ar'].find((c) => !languages.includes(c)) ?? ''
+	);
 
-	let busy = $state<'save' | 'test' | null>(null);
-	let saved = $state(false);
 	const submit: SubmitFunction = ({ submitter }) => {
 		busy = submitter?.getAttribute('formaction')?.includes('test') ? 'test' : 'save';
 		saved = false;
@@ -68,8 +87,13 @@
 				langInput = '';
 				langError = '';
 			}
+			stale = false;
 			busy = null;
 		};
+	};
+	const touched = () => {
+		stale = true;
+		saved = false;
 	};
 
 	const hostOf = (url: string) => {
@@ -89,26 +113,53 @@
 				: id === 'gemini'
 					? s.gemini.model
 					: '') || defaultModel(id);
+	const READY_LABEL = { ok: 'Key set', lost: 'Key unreadable', missing: 'No key' } as const;
+	const READY_TONE = { ok: 'ok', lost: 'err', missing: 'idle' } as const;
+
+	// Wall clock in the picked zone, so a wrong pick shows at once
+	let now = $state(new Date());
+	onMount(() => {
+		const t = setInterval(() => (now = new Date()), 30_000);
+		return () => clearInterval(t);
+	});
+	const clock = $derived.by(() => {
+		try {
+			return formatDate(now, 'HH:mm ddd', zone || 'UTC');
+		} catch {
+			return '';
+		}
+	});
 </script>
 
 <PageHead title="Transcription" />
 
-{#if Object.keys(errors).length}
-	<div class="hk-banner hk-banner--err" role="alert">
-		{#each Object.values(errors) as e (e)}<span>{e}</span>{/each}
-	</div>
+{#if errors.provider}
+	<p class="hk-banner hk-banner--err" role="alert">{errors.provider}</p>
 {/if}
 
-<form method="POST" action="?/save" use:enhance={submit} class="hk-fields">
+<form
+	method="POST"
+	action="?/save"
+	use:enhance={submit}
+	class="hk-fields"
+	oninput={touched}
+	onchange={touched}
+>
 	<fieldset>
 		<legend class="hk-field-label">Provider</legend>
 		<div class="providers">
 			{#each data.providers as p (p.id)}
+				{@const ready = data.ready[p.id]}
 				<label class="hk-option">
 					<input type="radio" name="provider" value={p.id} bind:group={provider} />
 					<span class="opt">
 						<span>{p.label}</span>
-						<span class="opt-model hk-mono">{modelOf(p.id) || hostOf(s.whisperCpp.url)}</span>
+						<span class="opt-model">
+							{#if ready}
+								<Signal tone={READY_TONE[ready]} label={READY_LABEL[ready]} hideLabel />
+							{/if}
+							<span class="hk-mono">{modelOf(p.id) || hostOf(s.whisperCpp.url)}</span>
+						</span>
 					</span>
 				</label>
 			{/each}
@@ -126,7 +177,11 @@
 					type="url"
 					bind:value={openaiBase}
 					aria-invalid={!!errors['openai.baseUrl'] || undefined}
+					aria-describedby={described('openai.baseUrl')}
 				/>
+				{#if errors['openai.baseUrl']}<p class="hk-field-error" id={errId('openai.baseUrl')}>
+						{errors['openai.baseUrl']}
+					</p>{/if}
 			</div>
 			<div>
 				<label class="hk-field-label" for="openai-model">Model</label>
@@ -137,17 +192,30 @@
 					value={s.openai.model}
 					placeholder={defaultModel('openai')}
 					spellcheck="false"
+					aria-invalid={!!errors['openai.model'] || undefined}
+					aria-describedby={described('openai.model')}
 				/>
+				{#if errors['openai.model']}<p class="hk-field-error" id={errId('openai.model')}>
+						{errors['openai.model']}
+					</p>{/if}
 			</div>
 		</div>
-		<SecretField
-			id="openai-key"
-			name="openai.apiKey"
-			label="API key"
-			set={data.keysSet.openai}
-			env={data.envLocks.openaiKey && isOpenAI(openaiBase) ? 'OPENAI_API_KEY' : null}
-			clearable
-		/>
+		<div>
+			<SecretField
+				id="openai-key"
+				name="openai.apiKey"
+				label="API key"
+				set={data.keysSet.openai}
+				lost={data.keysLost.openai}
+				env={data.envLocks.openaiKey && isOpenAI(openaiBase) ? 'OPENAI_API_KEY' : null}
+				invalid={!!errors['openai.apiKey']}
+				describedby={described('openai.apiKey')}
+				clearable
+			/>
+			{#if errors['openai.apiKey']}<p class="hk-field-error" id={errId('openai.apiKey')}>
+					{errors['openai.apiKey']}
+				</p>{/if}
+		</div>
 	</div>
 
 	<div class="group" hidden={provider !== 'openai-audio'}>
@@ -161,7 +229,14 @@
 					type="url"
 					bind:value={audioBase}
 					aria-invalid={!!errors['openaiAudio.baseUrl'] || undefined}
+					aria-describedby={described('openaiAudio.baseUrl')}
 				/>
+				{#if errors['openaiAudio.baseUrl']}<p
+						class="hk-field-error"
+						id={errId('openaiAudio.baseUrl')}
+					>
+						{errors['openaiAudio.baseUrl']}
+					</p>{/if}
 			</div>
 			<div>
 				<label class="hk-field-label" for="audio-model">Model</label>
@@ -172,17 +247,30 @@
 					value={s.openaiAudio.model}
 					placeholder={defaultModel('openai-audio')}
 					spellcheck="false"
+					aria-invalid={!!errors['openaiAudio.model'] || undefined}
+					aria-describedby={described('openaiAudio.model')}
 				/>
+				{#if errors['openaiAudio.model']}<p class="hk-field-error" id={errId('openaiAudio.model')}>
+						{errors['openaiAudio.model']}
+					</p>{/if}
 			</div>
 		</div>
-		<SecretField
-			id="audio-key"
-			name="openaiAudio.apiKey"
-			label="API key"
-			set={data.keysSet.openaiAudio}
-			env={data.envLocks.openaiKey && isOpenAI(audioBase) ? 'OPENAI_API_KEY' : null}
-			clearable
-		/>
+		<div>
+			<SecretField
+				id="audio-key"
+				name="openaiAudio.apiKey"
+				label="API key"
+				set={data.keysSet.openaiAudio}
+				lost={data.keysLost.openaiAudio}
+				env={data.envLocks.openaiKey && isOpenAI(audioBase) ? 'OPENAI_API_KEY' : null}
+				invalid={!!errors['openaiAudio.apiKey']}
+				describedby={described('openaiAudio.apiKey')}
+				clearable
+			/>
+			{#if errors['openaiAudio.apiKey']}<p class="hk-field-error" id={errId('openaiAudio.apiKey')}>
+					{errors['openaiAudio.apiKey']}
+				</p>{/if}
+		</div>
 	</div>
 
 	<div class="group" hidden={provider !== 'gemini'}>
@@ -195,16 +283,29 @@
 				value={s.gemini.model}
 				placeholder={defaultModel('gemini')}
 				spellcheck="false"
+				aria-invalid={!!errors['gemini.model'] || undefined}
+				aria-describedby={described('gemini.model')}
 			/>
+			{#if errors['gemini.model']}<p class="hk-field-error" id={errId('gemini.model')}>
+					{errors['gemini.model']}
+				</p>{/if}
 		</div>
-		<SecretField
-			id="gemini-key"
-			name="gemini.apiKey"
-			label="API key"
-			set={data.keysSet.gemini}
-			env={data.envLocks.geminiKey ? 'GEMINI_API_KEY' : null}
-			clearable
-		/>
+		<div>
+			<SecretField
+				id="gemini-key"
+				name="gemini.apiKey"
+				label="API key"
+				set={data.keysSet.gemini}
+				lost={data.keysLost.gemini}
+				env={data.envLocks.geminiKey ? 'GEMINI_API_KEY' : null}
+				invalid={!!errors['gemini.apiKey']}
+				describedby={described('gemini.apiKey')}
+				clearable
+			/>
+			{#if errors['gemini.apiKey']}<p class="hk-field-error" id={errId('gemini.apiKey')}>
+					{errors['gemini.apiKey']}
+				</p>{/if}
+		</div>
 	</div>
 
 	<div class="group" hidden={provider !== 'whisper-cpp'}>
@@ -217,7 +318,11 @@
 				type="url"
 				value={s.whisperCpp.url}
 				aria-invalid={!!errors['whisperCpp.url'] || undefined}
+				aria-describedby={described('whisperCpp.url')}
 			/>
+			{#if errors['whisperCpp.url']}<p class="hk-field-error" id={errId('whisperCpp.url')}>
+					{errors['whisperCpp.url']}
+				</p>{/if}
 		</div>
 	</div>
 
@@ -235,7 +340,10 @@
 						type="button"
 						class="lang-x"
 						aria-label="Remove {languageName(code)}"
-						onclick={() => (languages = languages.filter((l) => l !== code))}
+						onclick={() => {
+							languages = languages.filter((l) => l !== code);
+							touched();
+						}}
 					>
 						<Icon name="close" />
 					</button>
@@ -248,14 +356,14 @@
 					id="lang-add"
 					class="hk-input hk-mono"
 					name="languages"
-					placeholder="sw"
+					placeholder={langPlaceholder}
 					maxlength="3"
 					size="4"
 					autocomplete="off"
 					spellcheck="false"
 					bind:value={langInput}
 					aria-invalid={!!(langError || errors.languages) || undefined}
-					aria-describedby={langError ? 'lang-error' : undefined}
+					aria-describedby={langError || errors.languages ? 'languages-error' : undefined}
 					onkeydown={(e) => {
 						if (e.key === 'Enter') {
 							e.preventDefault();
@@ -266,43 +374,52 @@
 				<button type="button" class="hk-btn-secondary hk-btn-sm" onclick={addLanguage}>Add</button>
 			</span>
 		</div>
-		{#if langError}<p class="hk-field-error" id="lang-error">{langError}</p>{/if}
+		{#if langError || errors.languages}<p class="hk-field-error" id="languages-error">
+				{langError || errors.languages}
+			</p>{/if}
 	</div>
 
 	<div>
 		<label class="hk-field-label" for="prompt">Prompt</label>
-		<textarea id="prompt" name="prompt" class="hk-textarea" rows="4" placeholder="Names, jargon"
-			>{s.prompt}</textarea
+		<textarea
+			id="prompt"
+			name="prompt"
+			class="hk-textarea"
+			rows="4"
+			placeholder="Amina, Juma, Kilimani">{s.prompt}</textarea
 		>
 	</div>
 
 	<label class="hk-check">
 		<input type="checkbox" name="chunking" checked={s.chunking} />
-		Split long audio at pauses
+		Split audio over {data.chunkSeconds} s at pauses
 	</label>
 
 	<hr class="hk-rule" />
 
 	<div>
 		<label class="hk-field-label" for="timezone">Timezone</label>
-		<select
-			id="timezone"
-			name="timezone"
-			class="hk-select"
-			aria-invalid={!!errors.timezone || undefined}
-		>
-			{#each data.timeZones as z (z)}
-				<option value={z} selected={z === data.generalTimezone}>{z.replaceAll('_', ' ')}</option>
-			{/each}
-		</select>
-		<p class="tz-hint">
-			Defaults to TZ ({data.envTimezone.replaceAll('_', ' ')}). Pick another zone to override it.
-		</p>
+		<div class="tz">
+			<select
+				id="timezone"
+				name="timezone"
+				class="hk-select"
+				bind:value={zone}
+				aria-invalid={!!errors.timezone || undefined}
+				aria-describedby={described('timezone')}
+			>
+				{#each data.timeZones as z (z)}
+					<option value={z}>{z.replaceAll('_', ' ')}{z === data.envTimezone ? ' · TZ' : ''}</option>
+				{/each}
+			</select>
+			<span class="clock hk-mono">{clock}</span>
+		</div>
+		{#if errors.timezone}<p class="hk-field-error" id={errId('timezone')}>{errors.timezone}</p>{/if}
 	</div>
 
 	<div class="buttons">
-		<button class="hk-btn" disabled={!!busy} aria-busy={busy === 'save'}>
-			{busy === 'save' ? 'Saving…' : 'Save'}
+		<button class="hk-btn" aria-busy={busy === 'save'} disabled={busy === 'save'}>
+			{busy === 'save' ? 'Saving…' : saved ? 'Saved' : 'Save'}
 		</button>
 		<button
 			class="hk-btn-secondary"
@@ -313,23 +430,50 @@
 			{busy === 'test' ? 'Testing…' : 'Test'}
 		</button>
 		<span class="result" role="status">
-			{#if !busy && test}
-				<span class:bad={!test.ok}>
-					<span class="hk-dot" class:hk-dot--ok={test.ok} class:hk-dot--err={!test.ok}></span>
-					{test.message}
-				</span>
-			{:else if !busy && saved}
-				<span>Saved</span>
+			{#if !busy && test && (test.ok || !test.field)}
+				<TestResult result={test} {stale}>
+					{#if test.ok}<span class="hk-num">{formatElapsed(test.ms)}</span>{/if}
+				</TestResult>
 			{/if}
 		</span>
+		<span class="hk-sr" aria-live="polite">{saved ? 'Saved' : ''}</span>
 	</div>
+	{#if !busy && test?.ok && !stale}
+		<p class="probe">
+			<q>{test.text}</q>
+			{#each test.languages as code (code)}
+				<span class="hk-badge hk-badge--mono" title={languageName(code)}>{code}</span>
+			{/each}
+		</p>
+	{/if}
 </form>
 
 <style>
-	.tz-hint {
-		margin: 0.375rem 0 0;
-		font-size: 0.75rem;
+	.tz {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.tz .hk-select {
+		flex: 1;
+		min-width: 0;
+	}
+	.clock {
+		flex: none;
+		font-size: 0.8125rem;
 		color: var(--hk-text-3);
+	}
+	.probe {
+		margin: -0.5rem 0 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.375rem;
+		font-size: 0.9375rem;
+		color: var(--hk-text);
+	}
+	.probe q {
+		margin-right: 0.25rem;
 	}
 	fieldset {
 		border: 0;
@@ -354,12 +498,19 @@
 		line-height: 1.3;
 	}
 	.opt-model {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		min-width: 0;
 		font-size: 0.75rem;
 		font-weight: 400;
 		color: var(--hk-text-3);
 		overflow: hidden;
-		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.opt-model .hk-mono {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.group {
 		display: grid;
@@ -446,13 +597,5 @@
 		font-size: 0.875rem;
 		color: var(--hk-text-2);
 		min-width: 0;
-	}
-	.result > span {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 0.5rem;
-	}
-	.bad {
-		color: var(--hk-err);
 	}
 </style>

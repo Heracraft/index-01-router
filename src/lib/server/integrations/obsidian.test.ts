@@ -210,7 +210,8 @@ describe('toDeliverError', () => {
 		});
 		const e = toDeliverError(tls, url);
 		expect(e.retryable).toBe(false);
-		expect(e.message).toContain('insecure TLS');
+		expect(e.field).toBe('insecureTls');
+		expect(e.message).toContain('Tick Accept a self-signed certificate');
 	});
 
 	it('passes DeliverError through', () => {

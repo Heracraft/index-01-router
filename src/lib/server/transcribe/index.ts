@@ -190,11 +190,3 @@ export async function transcribe(
 		input.signal?.removeEventListener('abort', onAbort);
 	}
 }
-
-/** A cheap request that checks the key, the endpoint and the model. One line for the UI */
-export async function testTranscription(
-	settings: TranscriptionSettings,
-	deps: Pick<TranscribeDeps, 'fetch'> & { signal?: AbortSignal } = {}
-): Promise<string> {
-	return providerOf(settings).test(settings, { fetch: deps.fetch ?? fetch, signal: deps.signal });
-}

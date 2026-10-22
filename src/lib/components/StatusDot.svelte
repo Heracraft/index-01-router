@@ -1,39 +1,32 @@
 <script lang="ts">
-	/* Pipeline state as a 7px dot plus its label. Colour only for failed; work in flight pulses */
-	import { statusLabel } from '#lib/format.ts';
+	/* Pipeline state as a dot plus its label. Colour only for failed and for a retry; work in
+	   flight pulses. A retry shows its attempt number, with the last error on hover */
+	import { isPending, statusLabel } from '#lib/format.ts';
+	import Signal, { type SignalTone } from './Signal.svelte';
 
 	interface Props {
 		status: string;
 		/** Hide the label visually; it stays for screen readers */
 		compact?: boolean;
+		/** Attempts so far. Above 1 while pending, the row is retrying */
+		attempt?: number;
+		lastError?: string | null;
 	}
-	let { status, compact = false }: Props = $props();
+	let { status, compact = false, attempt = 0, lastError = null }: Props = $props();
 
-	const tone = $derived(
-		status === 'failed'
-			? 'hk-dot--err'
-			: status === 'done'
-				? 'hk-dot--done'
-				: status === 'received'
-					? ''
-					: 'hk-dot--busy'
+	const retrying = $derived(isPending(status) && attempt > 1);
+	const tone = $derived<SignalTone>(
+		retrying
+			? 'warn'
+			: status === 'failed'
+				? 'err'
+				: status === 'done'
+					? 'done'
+					: status === 'received'
+						? 'idle'
+						: 'busy'
 	);
+	const label = $derived(retrying ? `${statusLabel(status)} · ${attempt}` : statusLabel(status));
 </script>
 
-<span class="status" class:failed={status === 'failed'}>
-	<span class="hk-dot {tone}" aria-hidden="true"></span>
-	<span class:hk-sr={compact}>{statusLabel(status)}</span>
-</span>
-
-<style>
-	.status {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		white-space: nowrap;
-		color: var(--hk-text-2);
-	}
-	.failed {
-		color: var(--hk-err);
-	}
-</style>
+<Signal {tone} {label} hideLabel={compact} title={retrying ? lastError : null} />

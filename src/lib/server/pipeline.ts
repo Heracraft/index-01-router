@@ -18,7 +18,13 @@ import {
 	TranscribeError
 } from './transcribe/index.ts';
 import type { TranscribeInput, TranscribeResult } from './transcribe/types.ts';
-import { integrationMatches, kinds, listIntegrations, type Kind } from './integrations/index.ts';
+import {
+	integrationMatches,
+	kinds,
+	listIntegrations,
+	skipReason,
+	type Kind
+} from './integrations/index.ts';
 import { DeliverError } from './integrations/types.ts';
 
 const CONCURRENCY = 2;
@@ -419,7 +425,7 @@ async function transcribeStep(rec: Recording): Promise<Recording> {
 				failure = messageOf(e);
 				const retryable = !(e instanceof TranscribeError) || e.retryable;
 				if (!retryable || attempt >= TRANSCRIBE_BACKOFF_MS.length) break;
-				rec = await setRecording(rec.id, { error: `${failure}. Retrying` });
+				rec = await setRecording(rec.id, { error: failure });
 				await deps.sleep(TRANSCRIBE_BACKOFF_MS[attempt]!);
 			}
 		}
@@ -470,12 +476,10 @@ async function route(rec: Recording, only?: string, manual = false) {
 	}
 
 	const rows = await db.select().from(deliveries).where(eq(deliveries.recordingId, rec.id));
+	const everyone = new Map(all.map((i) => [i.id, i]));
 	for (const d of rows) {
 		if (!byId.has(d.integrationId) && (d.status === 'pending' || d.status === 'failed')) {
-			await setDelivery(d, {
-				status: 'skipped',
-				error: 'Integration is off or does not take this trigger'
-			});
+			await setDelivery(d, { status: 'skipped', error: skipReason(everyone.get(d.integrationId)) });
 		}
 	}
 	const todo = rows.filter(
@@ -557,7 +561,7 @@ async function deliver(
 				await setDelivery(d, { status: 'failed', error: message });
 				return;
 			}
-			await setDelivery(d, { error: `${message}. Retrying` });
+			await setDelivery(d, { error: message });
 			await deps.sleep(DELIVERY_BACKOFF_MS[attempt]!);
 		}
 	}

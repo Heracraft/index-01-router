@@ -3,7 +3,7 @@
 //   {{date}} {{time}}          YYYY-MM-DD and HH:mm
 //   {{transcript}} {{languages}} {{trigger}} {{duration}}
 //   {{heading}}                the integration's heading, for new-note templates
-import { formatDate } from '../time.ts';
+import { formatDate } from './time.ts';
 
 export interface TemplateVars {
 	recordedAt: Date;

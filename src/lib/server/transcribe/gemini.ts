@@ -66,20 +66,6 @@ export function geminiBody(
 	};
 }
 
-/** Half a second of silence, ogg/opus, for the Test button */
-const SILENCE: Upload = {
-	bytes: Buffer.from(
-		'T2dnUwACAAAAAAAAAAAAAAAAAAAAAEkq9qABE09wdXNIZWFkAQE4AYA+AAAAAABPZ2dTAAAAAAAAAAAAAAAAAAABAA' +
-			'AASZW+VAEuT3B1c1RhZ3MGAAAAZmZtcGVnAQAAABQAAABlbmNvZGVyPUxhdmMgbGlib3B1c09nZ1MABPheAAAAAAAA' +
-			'AAAAAAIAAACJ/z9nGgcGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGCAvkuaC8hAgHxrMOxggHxrMOxggHxrMOxggHxr' +
-			'MOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMO' +
-			'xggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxggHxrMOxg==',
-		'base64'
-	),
-	mime: 'audio/ogg',
-	name: 'audio.ogg'
-};
-
 interface GeminiReply {
 	candidates?: {
 		finishReason?: string;
@@ -142,27 +128,5 @@ export const gemini: Provider = {
 	async transcribe(audio, settings, ctx) {
 		if (!settings.gemini.apiKey) throw new TranscribeError(`No API key set for ${HOST}`, false);
 		return parseGeminiReply(await generate(audio, settings, this.model(settings), ctx));
-	},
-
-	/** GET the model (a cheap 404 for a typo), then transcribe half a second of silence */
-	async test(settings, ctx) {
-		const key = settings.gemini.apiKey;
-		const model = this.model(settings);
-		if (!key) throw new TranscribeError(`No API key set for ${HOST}`, false);
-		const quick = { ...ctx, timeoutMs: ctx.timeoutMs ?? 20_000 };
-		try {
-			await send(`${GEMINI_BASE}/models/${modelPath(model)}`, quick, {
-				headers: { 'x-goog-api-key': key },
-				attempts: 1,
-				model
-			});
-		} catch (e) {
-			if (e instanceof TranscribeError && / answered 404/.test(e.message))
-				throw new TranscribeError(`${model} not offered by ${HOST}`, false);
-			throw e;
-		}
-		// Any 2xx will do: a short output cap can end the reply before the JSON is complete
-		await generate(SILENCE, settings, model, quick, { maxOutputTokens: 64, attempts: 1 });
-		return `${model} transcribes`;
 	}
 };

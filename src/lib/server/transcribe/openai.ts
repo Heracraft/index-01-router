@@ -70,6 +70,8 @@ export function errorDetail(body: string): string {
 	msg = msg
 		.replace(/<[^>]*>/g, ' ')
 		.replace(/\s+/g, ' ')
+		// Provider advice ("Please try again in 1.2s"): the pipeline retries by itself
+		.replace(/\.?\s*Please try again in [\d.]+m?s\b[\s\S]*$/, '')
 		.trim();
 	return msg.length > 200 ? msg.slice(0, 197) + '...' : msg;
 }
@@ -189,54 +191,6 @@ export function requireKey(baseUrl: string, apiKey: string) {
 		throw new TranscribeError(`No API key set for ${hostOf(baseUrl)}`, false);
 }
 
-/**
- * GET {base}/models/{model}, which is small and quick; servers without that route get the full
- * list checked instead
- */
-export async function probeModel(
-	baseUrl: string,
-	apiKey: string,
-	model: string,
-	ctx: RequestContext
-): Promise<string> {
-	const base = trimUrl(baseUrl);
-	const host = hostOf(base);
-	requireKey(base, apiKey);
-	const get = (path: string) =>
-		send(
-			`${base}${path}`,
-			{ ...ctx, timeoutMs: ctx.timeoutMs ?? 20_000 },
-			{
-				headers: bearer(apiKey),
-				attempts: 1
-			}
-		);
-	const notFound = (e: unknown) => e instanceof TranscribeError && / answered 404/.test(e.message);
-	try {
-		const one = JSON.parse(await get(`/models/${model}`)) as { id?: unknown };
-		if (one?.id === model) return `${model} available`;
-	} catch (e) {
-		if (!notFound(e) && !(e instanceof SyntaxError)) throw e;
-	}
-	let body: string;
-	try {
-		body = await get('/models');
-	} catch (e) {
-		if (notFound(e)) return `${host} answered, but has no model list to check ${model} against`;
-		throw e;
-	}
-	let ids: string[];
-	try {
-		const j = JSON.parse(body) as { data?: { id?: unknown }[] };
-		ids = (j.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === 'string');
-	} catch {
-		return `${host} answered, but its model list is not JSON`;
-	}
-	if (!ids.length) return `${host} answered with an empty model list`;
-	if (!ids.includes(model)) throw new TranscribeError(`${model} not offered by ${host}`, false);
-	return `${model} available`;
-}
-
 // ---------- provider ----------
 
 export type ModelKind = 'gpt-transcribe' | 'gpt-4o' | 'whisper';
@@ -338,9 +292,5 @@ export const openai: Provider = {
 			}
 			throw e;
 		}
-	},
-
-	test(settings, ctx) {
-		return probeModel(settings.openai.baseUrl, settings.openai.apiKey, this.model(settings), ctx);
 	}
 };
