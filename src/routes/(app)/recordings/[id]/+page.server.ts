@@ -52,19 +52,28 @@ export const load: PageServerLoad = async ({ params }) => {
 	]);
 
 	// The entry a resend of the current transcript would append, rendered as delivery would
-	const entryFor = (config: Record<string, unknown>) => {
+	const entryFor = (config: Record<string, unknown>, transcript = rec.transcript ?? '') => {
 		try {
 			return renderEntry(obsidianConfig(config).entryTemplate, {
 				recordedAt: rec.recordedAt,
 				timeZone: general.timezone || 'UTC',
-				transcript: rec.transcript ?? '',
+				transcript,
 				languages: parseLanguages(rec.languages),
 				trigger: rec.trigger,
 				durationMs: rec.durationMs
 			});
 		} catch {
-			return rec.transcript ?? '';
+			return transcript;
 		}
+	};
+	// The note after a resend: the entry already there (its old text is not kept, so "…") and
+	// the new one under it, as the append places them
+	const resendPreview = (config: Record<string, unknown>) => {
+		const earlier = entryFor(config, '…');
+		const next = entryFor(config);
+		const gap = /^\s*([-*+]|\d+\.)\s/.test(next) ? '\n' : '\n\n';
+		const head = earlier + gap;
+		return { body: head + next, from: head.split('\n').length - 1 };
 	};
 
 	const appTranscript = rec.appTranscript?.trim() || null;
@@ -101,9 +110,12 @@ export const load: PageServerLoad = async ({ params }) => {
 		deliveries: rows.map(({ sentVersion, config, ...d }) => {
 			const stale = d.status === 'sent' && sentVersion < rec.transcriptVersion;
 			// Read from the integration as it is now, so older rows show the same short reason
-			const error =
-				d.status === 'skipped' ? skipReason(all.find((i) => i.id === d.integrationId)) : d.error;
-			return { ...d, error, stale, preview: stale ? entryFor(config) : null };
+			const integration = all.find((i) => i.id === d.integrationId);
+			const error = d.status === 'skipped' ? skipReason(integration) : d.error;
+			// A skipped row delivers only once its integration takes this recording
+			const deliverable =
+				d.status !== 'skipped' || (!!integration && integrationMatches(integration, rec.trigger));
+			return { ...d, error, stale, deliverable, preview: stale ? resendPreview(config) : null };
 		})
 	};
 };

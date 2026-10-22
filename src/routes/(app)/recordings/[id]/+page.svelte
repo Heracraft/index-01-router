@@ -17,6 +17,7 @@
 		formatElapsed,
 		isPending,
 		languageName,
+		statusLabel,
 		triggerLabel
 	} from '#lib/format.ts';
 	import type { PageProps } from './$types';
@@ -70,7 +71,9 @@
 		};
 	};
 
-	const lineCount = (text: string | null) => (text ?? '').split('\n').length;
+	const lineCount = (text: string) => text.split('\n').length;
+	// Why the header buttons wait: the run in flight
+	const busyTitle = $derived(busy ? `Still ${statusLabel(rec.status).toLowerCase()}` : undefined);
 </script>
 
 <nav class="crumbs" aria-label="Breadcrumb">
@@ -87,6 +90,7 @@
 				<button
 					class="hk-btn-secondary"
 					disabled={busy || !!pending}
+					title={busyTitle}
 					aria-busy={pending === 'route'}
 				>
 					{pending === 'route' ? 'Delivering…' : deliverLabel}
@@ -98,6 +102,7 @@
 				<button
 					class="hk-btn-secondary"
 					disabled={busy || !!pending}
+					title={busyTitle}
 					aria-busy={pending === 'transcribe'}
 				>
 					{pending === 'transcribe' ? 'Queuing…' : 'Transcribe again'}
@@ -127,13 +132,17 @@
 		<dt>Status</dt>
 		<dd class="status">
 			{#if rec.status === 'failed' && failedDeliveries > 0}
-				<StatusDot status="failed" />
-				<a href="#deliveries" class="muted"
-					>· {failedDeliveries} {failedDeliveries === 1 ? 'delivery' : 'deliveries'}</a
+				<a href="#deliveries"
+					><Signal
+						tone="err"
+						label="{failedDeliveries} {failedDeliveries === 1 ? 'delivery' : 'deliveries'} failed"
+					/></a
 				>
 			{:else if st.retry}
-				<StatusDot status={rec.status} attempt={st.retry.attempt} />
-				{#if st.retry.lastError}<span class="muted">· {st.retry.lastError}</span>{/if}
+				<!-- No space before the separator, so a long error wraps after it, never before -->
+				<StatusDot status={rec.status} attempt={st.retry.attempt} />{#if st.retry.lastError}<span
+						class="muted">&nbsp;· {st.retry.lastError}</span
+					>{/if}
 			{:else}
 				<StatusDot status={rec.status} />
 			{/if}
@@ -291,7 +300,7 @@
 									>{d.error ? cleanError(d.error) : ''}</td
 								>
 								<td class="act">
-									{#if d.status === 'failed' || d.status === 'skipped'}
+									{#if (d.status === 'failed' || d.status === 'skipped') && d.deliverable}
 										<form method="POST" action="?/redeliver" use:enhance={submit(d.id)}>
 											<input type="hidden" name="delivery" value={d.id} />
 											<button
@@ -313,7 +322,7 @@
 											action="?/redeliver"
 											fields={{ delivery: d.id }}
 											label="Send corrected transcript"
-											title="Append to {d.target ?? d.name}"
+											title="Add a second entry"
 											confirmLabel="Append"
 											triggerClass="hk-btn-secondary hk-btn-sm"
 											confirmClass="hk-btn"
@@ -321,11 +330,13 @@
 											disabled={busy || !!pending}
 										>
 											<div class="confirm">
-												<NotePreview
-													path={d.target ?? d.name}
-													body={d.preview ?? ''}
-													entryLines={[0, lineCount(d.preview)]}
-												/>
+												{#if d.preview}
+													<NotePreview
+														path={d.target ?? d.name}
+														body={d.preview.body}
+														entryLines={[d.preview.from, lineCount(d.preview.body)]}
+													/>
+												{/if}
 											</div>
 										</ConfirmAction>
 									{:else if d.status === 'sent'}
@@ -436,11 +447,9 @@
 		line-height: 1.75rem;
 		letter-spacing: -0.01em;
 	}
-	.status {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.375rem;
+	/* Inline flow, so a long retry error wraps word by word after the dot and label */
+	.status :global(.signal) {
+		vertical-align: top;
 	}
 	.status a {
 		text-decoration: none;

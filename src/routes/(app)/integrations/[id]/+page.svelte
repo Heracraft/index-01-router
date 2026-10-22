@@ -137,8 +137,22 @@
 		};
 	});
 
+	// Delete dialog: what goes with it, then what stays
+	const deleteLine = $derived(
+		[
+			data.deliveryCount === 1
+				? '1 delivery record goes with it.'
+				: data.deliveryCount > 1
+					? `${data.deliveryCount.toLocaleString('en-US')} delivery records go with it.`
+					: '',
+			'Notes in the vault stay.'
+		]
+			.filter(Boolean)
+			.join(' ')
+	);
+
 	// Token chips insert {{token}} at the caret
-	const areas: Record<string, HTMLTextAreaElement> = {};
+	const areas: Record<string, HTMLTextAreaElement> = $state({});
 	function insert(key: string, token: string) {
 		const el = areas[key];
 		if (!el) return;
@@ -156,11 +170,7 @@
 	{#snippet actions()}
 		{#if !isNew}
 			<ConfirmAction action="?/delete" label="Delete" title="Delete {it.name}">
-				<p>
-					{#if data.deliveryCount > 0}{data.deliveryCount.toLocaleString('en-US')}
-						{data.deliveryCount === 1 ? 'delivery record goes' : 'delivery records go'} with it.
-					{/if}Notes in the vault stay.
-				</p>
+				<p>{deleteLine}</p>
 			</ConfirmAction>
 		{/if}
 	{/snippet}

@@ -43,6 +43,7 @@
 					: `${formatDay(data.last.at, tz)}, `) + formatTime(data.last.at, tz, true)
 			: ''
 	);
+	const lastLabel = $derived(`Last request ${lastAt}`);
 	const waiting = $derived(
 		!!data.rotatedAt && (!data.last || new Date(data.rotatedAt) > new Date(data.last.at))
 	);
@@ -65,12 +66,12 @@
 			{#if waiting}
 				<Signal tone="warn" label="Waiting for a signed request" />
 			{:else if data.last && data.last.status < 300}
-				<Signal tone="ok" label={lastAt}>
+				<Signal tone="ok" label={lastLabel}>
 					{#if resultOf(data.last)}<span class="muted">· {resultOf(data.last)}</span>{/if}
 					{#if data.last.test}<span class="muted">· Test event</span>{/if}
 				</Signal>
 			{:else if data.last}
-				<Signal tone="err" label={lastAt}>
+				<Signal tone="err" label={lastLabel}>
 					<span>· {capital(data.last.reason)}</span>
 				</Signal>
 			{:else}

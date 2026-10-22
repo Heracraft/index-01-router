@@ -93,13 +93,13 @@
 	}
 
 	const failedLabel = (targets: string[]) =>
-		targets[0] + (targets.length > 1 ? ` +${targets.length - 1}` : '');
+		`${targets[0]}${targets.length > 1 ? ` +${targets.length - 1}` : ''} failed`;
 </script>
 
 <PageHead title="Recordings">
 	{#snippet sub()}
 		{#if live.connected}
-			<Signal tone="live" label="Live" hideLabel title="Live" />
+			<Signal tone="live" label="Live" />
 		{:else}
 			<Signal tone="idle" label="Offline" />
 		{/if}
@@ -217,6 +217,7 @@
 										attempt={r.attempts}
 										lastError={st.retry?.lastError}
 									/>
+									{#if st.retry?.lastError}<span class="muted">· {st.retry.lastError}</span>{/if}
 								{/if}
 							</span>
 							<span class="langs">

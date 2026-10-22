@@ -26,7 +26,9 @@
 						? 'idle'
 						: 'busy'
 	);
-	const label = $derived(retrying ? `${statusLabel(status)} · ${attempt}` : statusLabel(status));
+	const label = $derived(
+		retrying ? `${statusLabel(status)} · attempt ${attempt}` : statusLabel(status)
+	);
 </script>
 
 <Signal {tone} {label} hideLabel={compact} title={retrying ? lastError : null} />

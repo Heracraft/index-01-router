@@ -4,6 +4,7 @@
 	import PageHead from '#lib/components/PageHead.svelte';
 	import Signal, { type SignalTone } from '#lib/components/Signal.svelte';
 	import { formatDateTime, triggerLabel } from '#lib/format.ts';
+	import { cleanError } from '#lib/recording-state.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -19,6 +20,7 @@
 	};
 	const lost = $derived(new Set(data.lostIntegrations.map((i) => i.id)));
 	const manyKinds = $derived(data.kinds.length > 1);
+	const lastError = (e: string | null) => (e ? cleanError(e) : null);
 	const STATUS: Record<string, string> = {
 		sent: 'Sent',
 		failed: 'Failed',
@@ -77,7 +79,15 @@
 									href={resolve('/(app)/recordings/[id]', { id: i.last.recordingId })}
 								>
 									{#if i.last.status === 'failed'}
-										<Signal tone="err" label="Failed" />
+										<Signal tone="err" label="Failed" title={lastError(i.last.error)} />
+									{:else if i.last.status === 'pending'}
+										<Signal
+											tone={i.last.error ? 'warn' : 'busy'}
+											label={i.last.error ? 'Retrying' : 'Pending'}
+											title={lastError(i.last.error)}
+										/>
+									{:else if i.last.status === 'skipped'}
+										<Signal tone="idle" label="Skipped · {i.last.error}" />
 									{:else}
 										<Signal
 											tone={TONE[i.last.status] ?? 'idle'}

@@ -56,11 +56,34 @@ function ctx(f: typeof fetch, waits: number[] = []): RequestContext {
 	return { fetch: f, sleep: async (ms) => void waits.push(ms) };
 }
 
+/** The multipart body send() encoded, read back */
 async function formOf(c: Call) {
-	return c.init.body as FormData;
+	const headers = c.init.headers as Record<string, string>;
+	expect(c.init.body).toBeInstanceOf(Uint8Array);
+	return new Response(c.init.body, { headers }).formData();
 }
 
 describe('send', () => {
+	it('survives a refused request with a multipart body', async () => {
+		// undici used to throw an uncaught ERR_INVALID_STATE here, which ended the process.
+		// Port 9 is on fetch's blocked list, so the request fails while the body still streams,
+		// and transcribe() then aborts the shared signal
+		const body = () => {
+			const form = new FormData();
+			form.set('file', new Blob([new Uint8Array(32 * 1024)], { type: 'audio/webm' }), 'a.webm');
+			form.append('model', 'gpt-transcribe');
+			return form;
+		};
+		const stop = new AbortController();
+		const sent = send(
+			'http://127.0.0.1:9/v1/audio/transcriptions',
+			{ fetch, signal: stop.signal, sleep: async () => {} },
+			{ body }
+		).finally(() => stop.abort());
+		await expect(sent).rejects.toThrow(/Could not reach 127\.0\.0\.1:9/);
+		await new Promise((r) => setTimeout(r, 200));
+	});
+
 	it('retries 429 and 5xx, honouring Retry-After', async () => {
 		const waits: number[] = [];
 		const { f, calls } = fakeFetch([

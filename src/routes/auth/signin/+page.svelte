@@ -26,8 +26,9 @@
 		{#if error}
 			<p class="hk-banner hk-banner--err" role="alert">
 				{#if error.code === 'denied'}
-					{#if error.email}<span><code>{error.email}</code> is not on the allow list.</span
-						>{:else}This account is not on the allow list.{/if}
+					{#if error.email}<span
+							><code>{error.email}</code> is not in <code>ALLOWED_EMAILS</code>.</span
+						>{:else}<span>This account is not in <code>ALLOWED_EMAILS</code>.</span>{/if}
 				{:else if error.code === 'unverified'}
 					{#if error.email}<span
 							><code>{error.email}</code> is not verified at the identity provider.</span
@@ -38,7 +39,7 @@
 					{#if error.host}<span>Cannot reach <code>{error.host}</code>.</span>{:else}Cannot reach
 						the identity provider.{/if}
 				{:else}
-					<span>Sign-in failed: <code>{error.code}</code></span>
+					Sign-in failed.
 				{/if}
 			</p>
 		{/if}

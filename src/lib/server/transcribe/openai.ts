@@ -128,6 +128,20 @@ export interface SendOptions {
 	model?: string;
 }
 
+/**
+ * A FormData body as bytes plus its multipart content type. Handed a FormData, undici pumps it
+ * through a stream that keeps writing after a refused connection closed it, and the
+ * ERR_INVALID_STATE it throws there is uncaught: it takes the whole process down
+ */
+async function settle(body: BodyInit | undefined, headers: Record<string, string> | undefined) {
+	if (!(body instanceof FormData)) return { body, headers };
+	const encoded = new Response(body);
+	return {
+		body: new Uint8Array(await encoded.arrayBuffer()),
+		headers: { ...headers, 'content-type': encoded.headers.get('content-type')! }
+	};
+}
+
 /** One request with retries. Resolves to the response body of a 2xx answer */
 export async function send(
 	url: string,
@@ -147,10 +161,11 @@ export async function send(
 		let r: Response | null = null;
 		let body = '';
 		try {
+			const { body: payload, headers } = await settle(opts.body?.(), opts.headers);
 			const res = await ctx.fetch(url, {
 				method: opts.method ?? (opts.body ? 'POST' : 'GET'),
-				headers: opts.headers,
-				body: opts.body?.(),
+				headers,
+				body: payload,
 				signal
 			});
 			body = await res.text();
