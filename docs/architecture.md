@@ -3,7 +3,7 @@
 One SvelteKit 3 app (adapter-node), one Postgres, one data volume: the two services in
 `compose.yaml`. The Obsidian REST server (Heracraft/obsidian-remote-rest-api) and the optional
 whisper.cpp server are hosted separately and reached by URL (`OBSIDIAN_MCP_URL`, the whisper.cpp
-URL on the Transcription page).
+URL under Settings > Transcription).
 
 ```
 Index 01 app ──POST multipart, HMAC signed──▶ /api/index01/webhook
@@ -169,7 +169,25 @@ the status and error of each failed recording that had one.
 
 ## UI
 
-Herakraft UI kit (`src/lib/styles/hk-tokens.css`, from Heracraft/branding). Rail: Recordings,
-Integrations, Transcription, Webhook. Recording detail shows audio, transcript, languages,
-provider, deliveries, with retry. Live updates over SSE (`/events`). Upload a file on Recordings
-to run the same pipeline without the ring.
+Herakraft UI kit (`src/lib/styles/hk-tokens.css`, from Heracraft/branding), with the journal
+layout in `src/lib/styles/journal.css`. Routes:
+
+- `/` is today, `/day/YYYY-MM-DD` any other day: the day's daily note "Notes" section as the vault
+  has it, read through Obsidian (`journal.ts`, `readNote`, cached a few seconds and dropped on
+  every pipeline change), with each recording matched to the line it wrote (`notes/merge.ts`).
+  Lines typed in Obsidian show without audio. Failed recordings sit at their time with the cause
+  and one fix; in-flight ones at the end. When Obsidian does not answer, the sheet shows the
+  recordings alone. A month calendar (dots per day, red for a failure) and a "Not in a note" list
+  sit beside it; under 900 px a week strip.
+- `/recordings` searches every transcript and filters by `?status=` (failed, pending, done).
+- `/recordings/[id]`: problem block with the cause, the raw error and one action when something
+  failed, the player, the transcript (edit, copy, share), "In the note" with the line in its note,
+  and Details with Transcribe again and Delete.
+- `/settings`: Daily note (one section per integration), Transcription, Ring (webhook URL, secret,
+  rejections), General (timezone, theme, sign out). A save bar appears once something changed.
+  `/settings/requests` holds the webhook log. `/integrations`, `/transcription` and `/webhook`
+  redirect there.
+
+One shared `Audio` element plays every recording (`audio.svelte.ts`), so starting a line pauses
+the last one. Live updates over SSE (`/events`) reload the page data; rows are keyed by id. The
+header's upload button runs a file through the same pipeline without the ring.

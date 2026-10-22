@@ -271,6 +271,26 @@ export async function redeliver(deliveryId: string): Promise<void> {
 	push({ id: d.recordingId, from: 'route', only: deliveryId });
 }
 
+/**
+ * Replaces the transcript with text the owner typed. The version goes up, so deliveries of the
+ * old text show as stale and can be sent again
+ */
+export async function editTranscript(recordingId: string, text: string): Promise<void> {
+	const transcript = text.replace(/\r\n?/g, '\n').trim();
+	if (!transcript) throw new Error('The transcript cannot be empty');
+	const rec = await load(recordingId);
+	if (!rec) throw new Error('Recording not found');
+	if (rec.status !== 'done' && rec.status !== 'failed') {
+		throw new Error('Recording is still processing');
+	}
+	if (!reserve(recordingId)) throw new Error('Recording is still processing');
+	try {
+		await setRecording(recordingId, { transcript });
+	} finally {
+		busy.delete(recordingId);
+	}
+}
+
 async function load(id: string): Promise<Recording | undefined> {
 	const [row] = await db.select().from(recordings).where(eq(recordings.id, id));
 	return row;

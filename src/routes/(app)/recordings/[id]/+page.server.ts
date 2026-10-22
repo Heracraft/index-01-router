@@ -3,9 +3,13 @@ import { asc, eq } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.ts';
 import { deliveries, integrations, recordings, webhookEvents } from '#lib/server/db/schema.ts';
 import { deleteRecording } from '#lib/server/ingest.ts';
-import { redeliver, retryRecording } from '#lib/server/pipeline.ts';
+import { editTranscript, redeliver, retryRecording } from '#lib/server/pipeline.ts';
+import { entryRecs, notePathFor, obsidianLink, readNoteCached } from '#lib/server/journal.ts';
+import { entryRaw, parseNote, sectionOf } from '#lib/notes/sheet.ts';
+import { dayKey } from '#lib/format.ts';
 import {
 	integrationMatches,
+	listIntegrations,
 	listIntegrationsForUI,
 	skipReason
 } from '#lib/server/integrations/index.ts';
@@ -76,8 +80,94 @@ export const load: PageServerLoad = async ({ params }) => {
 		return { body: head + next, from: head.split('\n').length - 1 };
 	};
 
+	const timeZone = general.timezone || 'UTC';
+	const day = dayKey(rec.recordedAt, timeZone);
+	const [entry] = await entryRecs(eq(recordings.id, rec.id), 1);
+
+	// "In the note": the note each delivery writes to, read from Obsidian when it answers, with
+	// this recording's line marked, or where it would go when it is not there yet
+	const resolvedAll = await listIntegrations();
+	const targets = rows.length
+		? rows.map((d) => ({ integrationId: d.integrationId, delivery: d }))
+		: all
+				.filter((i) => integrationMatches(i, rec.trigger))
+				.map((i) => ({ integrationId: i.id, delivery: null }));
+	const contexts = await Promise.all(
+		targets.map(async ({ integrationId, delivery }) => {
+			const integration = resolvedAll.find((i) => i.id === integrationId);
+			if (!integration || integration.kind !== 'obsidian') return null;
+			const config = obsidianConfig(integration.config);
+			const path = delivery?.target ?? notePathFor(integration, day, timeZone);
+			const entryText = entryFor(integration.config);
+			const sent = delivery?.status === 'sent';
+			const read = path ? await readNoteCached(integration, path) : null;
+			type Line = {
+				time: string | null;
+				text: string;
+				task: boolean | null;
+				mark: 'this' | 'pending' | null;
+			};
+			const mine = parseNote(entryText).find((b) => b.type !== 'heading');
+			const own: Line = {
+				time: mine?.time ?? null,
+				text: mine?.text ?? rec.transcript ?? '',
+				task: null,
+				mark: sent ? 'this' : 'pending'
+			};
+			let lines: Line[] = [own];
+			let before = false;
+			let after = false;
+			const blocks =
+				read?.state === 'ok' ? sectionOf(parseNote(read.content), config.heading) : null;
+			if (blocks) {
+				const items = blocks.filter((b) => b.type !== 'heading');
+				const want = entryRaw(entryText);
+				let at = sent ? items.findIndex((b) => b.raw === want) : -1;
+				if (sent && at < 0 && own.time) {
+					at = items.findIndex((b) => b.time === own.time);
+				}
+				const all: Line[] = items.map((b) => ({
+					time: b.time,
+					text: b.text,
+					task: b.task,
+					mark: null
+				}));
+				if (at >= 0) {
+					all[at] = { ...all[at]!, mark: sent ? 'this' : null };
+					if (!sent) at = -1;
+				}
+				if (at < 0) {
+					// Not in the note: where the append would put it, by time
+					at = own.time ? all.findIndex((l) => l.time !== null && l.time > own.time!) : -1;
+					if (at < 0) at = all.length;
+					all.splice(at, 0, own);
+				}
+				const from = Math.max(0, at - 2);
+				const to = Math.min(all.length, at + 3);
+				lines = all.slice(from, to);
+				before = from > 0;
+				after = to < all.length;
+			}
+			return {
+				integrationId,
+				name: integration.name,
+				path,
+				link: path ? obsidianLink(path) : null,
+				heading: config.heading,
+				state: read?.state ?? 'off',
+				sent,
+				lines,
+				before,
+				after
+			};
+		})
+	);
+
 	const appTranscript = rec.appTranscript?.trim() || null;
 	return {
+		day,
+		entry: entry!,
+		contexts: contexts.filter((c) => c !== null),
 		recording: {
 			id: rec.id,
 			deliveryId: rec.deliveryId,
@@ -86,6 +176,7 @@ export const load: PageServerLoad = async ({ params }) => {
 			signed: rec.signed,
 			recordedAt: rec.recordedAt,
 			receivedAt: rec.receivedAt,
+			updatedAt: rec.updatedAt,
 			hasAudio: !!rec.audioPath,
 			audioMime: rec.audioMime,
 			audioBytes: rec.audioBytes,
@@ -156,6 +247,15 @@ export const actions: Actions = {
 			return fail(409, { action: 'redeliver', error: message(e) });
 		}
 		return { action: 'redeliver' };
+	},
+	edit: async ({ request, params }) => {
+		const text = String((await request.formData()).get('transcript') ?? '');
+		try {
+			await editTranscript(params.id, text);
+		} catch (e) {
+			return fail(409, { action: 'edit', error: message(e) });
+		}
+		return { action: 'edit' };
 	},
 	delete: async ({ params }) => {
 		await deleteRecording(params.id);

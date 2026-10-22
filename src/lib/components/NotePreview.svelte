@@ -1,12 +1,10 @@
 <script lang="ts">
-	/* The note as a delivery would write it: path in the bar, Markdown bytes in the body, the new
-	   entry's lines marked. A code pane, since it shows file content rather than prose */
+	/* The note as a delivery would write it, laid out as the vault shows it: path on top, the
+	   new entry's lines marked with the accent dot */
 	interface Props {
 		/** Rendered note path; null when pathError is set */
 		path: string | null;
-		/** "Note path cannot contain .." */
 		pathError?: string | null;
-		/** id for the bar, so a field can point at a path error */
 		barId?: string;
 		/** Rendered text: new-note template plus entry, or the entry alone */
 		body: string;
@@ -17,47 +15,49 @@
 
 	const lines = $derived(body.split('\n'));
 	const isEntry = (i: number) => !!entryLines && i >= entryLines[0] && i < entryLines[1];
+	const heading = (l: string) => /^#{1,6}\s/.test(l);
 </script>
 
-<div class="hk-code hk-code--wrap preview">
-	<div class="hk-code-bar" id={barId}>
+<article class="sheet sheet--sm np">
+	<div class="sheet-bar" id={barId}>
 		{#if pathError}
 			<span class="path err">{pathError}</span>
 		{:else}
-			<span class="path hk-mono">{path}</span>
+			<span class="path">{path}</span>
 		{/if}
 	</div>
-	<div class="hk-code-body">
-		<pre><code
-				>{#each lines as line, i (i)}<span class="ln" class:entry={isEntry(i)}>{line || ' '}</span
-					>{/each}</code
-			></pre>
+	<div class="sheet-body">
+		{#each lines as line, i (i)}
+			{#if heading(line)}
+				<h3 class="nh">{line.replace(/^#+\s*/, '')}</h3>
+			{:else if line.trim()}
+				<p class="ln" class:e--this={isEntry(i)}>{line}</p>
+			{/if}
+		{/each}
 	</div>
-</div>
+</article>
 
 <style>
-	.preview {
+	.np {
 		max-width: 40rem;
 	}
-	.path {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		font-size: 0.75rem;
-	}
 	.err {
-		color: var(--hk-code-5xx);
-	}
-	.hk-code-body {
-		padding-inline: 0;
+		color: var(--hk-err);
 	}
 	.ln {
-		display: block;
-		padding-inline: var(--cb-pad);
+		position: relative;
+		margin: 0;
+		padding: 0.25rem 0;
+		font-size: 0.9375rem;
+		line-height: 1.6;
+		color: var(--hk-text-2);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
-	.entry {
-		background: color-mix(in srgb, var(--hk-code-string) 12%, transparent);
-		box-shadow: inset 2px 0 0 color-mix(in srgb, var(--hk-code-string) 55%, transparent);
+	.ln.e--this {
+		color: var(--hk-text);
+	}
+	.ln.e--this::before {
+		top: 0.85rem;
 	}
 </style>

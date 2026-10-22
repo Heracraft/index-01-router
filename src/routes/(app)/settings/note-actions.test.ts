@@ -34,24 +34,21 @@ vi.mock('#lib/server/integrations/index.ts', () => {
 		}
 	};
 });
-vi.mock('#lib/server/db/index.ts', () => ({ db: {} }));
 vi.mock('#lib/server/settings.ts', () => ({ getSettings: async () => ({ timezone: 'UTC' }) }));
 vi.mock('#lib/server/pipeline.ts', () => ({ settleAfterIntegrationDelete: async () => {} }));
 
-const { actions } = await import('./+page.server.ts');
+const { saveNote, testNote } = await import('./note-actions.ts');
 
-function post(search: string) {
-	const url = new URL(`http://localhost/integrations/new${search}`);
+function post(fields: Record<string, string>) {
 	const body = new FormData();
+	for (const [k, v] of Object.entries(fields)) body.set(k, v);
 	body.set('name', 'Stub');
 	body.set('enabled', 'on');
 	body.append('triggers', 'upload');
 	body.set('config.url', 'http://x');
-	const request = new Request(url, { method: 'POST', body });
+	const request = new Request('http://localhost/settings?/note', { method: 'POST', body });
 	// Only the fields the actions read
-	return { request, url, params: { id: 'new' } } as unknown as Parameters<
-		NonNullable<typeof actions.save>
-	>[0];
+	return { request } as unknown as Parameters<typeof saveNote>[0];
 }
 
 beforeEach(() => {
@@ -60,23 +57,27 @@ beforeEach(() => {
 });
 
 describe('new integration actions', () => {
-	it('saves the kind from ?kind= next to the action param', async () => {
-		await expect(actions.save!(post('?kind=stub&/save'))).rejects.toMatchObject({
+	it('saves the kind the form names and lands on its section', async () => {
+		await expect(saveNote(post({ id: 'new', kind: 'stub' }))).rejects.toMatchObject({
 			status: 303,
-			location: '/integrations/00000000-0000-4000-8000-000000000001'
+			location: '/settings#note-00000000-0000-4000-8000-000000000001'
 		});
 		expect(saved).toEqual([expect.objectContaining({ kind: 'stub' })]);
 	});
 
-	it('tests the kind from ?kind=', async () => {
-		await actions.test!(post('?kind=stub&/test'));
+	it('tests the kind the form names', async () => {
+		await testNote(post({ id: 'new', kind: 'stub' }));
 		expect(tested).toEqual(['stub']);
 	});
 
-	it('refuses a request without a kind instead of assuming obsidian', async () => {
-		await expect(actions.save!(post('?/save'))).rejects.toMatchObject({ status: 400 });
-		await expect(actions.test!(post('?/test'))).rejects.toMatchObject({ status: 400 });
+	it('refuses a new integration without a kind instead of assuming obsidian', async () => {
+		await expect(saveNote(post({ id: 'new' }))).rejects.toMatchObject({ status: 400 });
+		await expect(testNote(post({ id: 'new' }))).rejects.toMatchObject({ status: 400 });
 		expect(saved).toEqual([]);
 		expect(tested).toEqual([]);
+	});
+
+	it('refuses an id that is not an integration', async () => {
+		await expect(saveNote(post({ id: 'nope' }))).rejects.toMatchObject({ status: 404 });
 	});
 });

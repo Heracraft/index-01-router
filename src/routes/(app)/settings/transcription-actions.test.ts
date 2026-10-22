@@ -40,7 +40,7 @@ vi.mock('#lib/server/settings.ts', () => {
 	};
 });
 
-const { actions } = await import('./+page.server.ts');
+const { saveTranscription } = await import('./transcription-actions.ts');
 
 type Stored = {
 	openai: { model: string; apiKey: string };
@@ -52,8 +52,8 @@ type Stored = {
 function post(fields: [string, string][]) {
 	const body = new FormData();
 	for (const [k, v] of fields) body.append(k, v);
-	const request = new Request('http://localhost/transcription?/save', { method: 'POST', body });
-	return { request } as unknown as Parameters<NonNullable<typeof actions.save>>[0];
+	const request = new Request('http://localhost/settings?/transcription', { method: 'POST', body });
+	return { request } as unknown as Parameters<typeof saveTranscription>[0];
 }
 
 const base: [string, string][] = [
@@ -68,38 +68,38 @@ beforeEach(() => store.values.clear());
 
 describe('transcription save', () => {
 	it('stores a cleared model blank, so the provider default applies', async () => {
-		await actions.save!(post([...base, ['openai.model', ''], ['openaiAudio.model', ' ']]));
+		await saveTranscription(post([...base, ['openai.model', ''], ['openaiAudio.model', ' ']]));
 		const t = store.values.get('transcription') as Stored;
 		expect([t.openai.model, t.openaiAudio.model]).toEqual(['', '']);
 	});
 
 	it('keeps a typed model', async () => {
-		await actions.save!(post([...base, ['openaiAudio.model', ' gpt-audio-mini ']]));
+		await saveTranscription(post([...base, ['openaiAudio.model', ' gpt-audio-mini ']]));
 		expect((store.values.get('transcription') as Stored).openaiAudio.model).toBe('gpt-audio-mini');
 	});
 
 	it('refuses a provider that no longer exists', async () => {
-		const out = await actions.save!(
+		const out = await saveTranscription(
 			post([['provider', 'gemini'], ...base.filter(([k]) => k !== 'provider')])
 		);
 		expect(out).toMatchObject({ status: 400, data: { errors: { provider: expect.any(String) } } });
 	});
 
 	it('leaves the whisper.cpp URL blank until whisper.cpp is the provider', async () => {
-		await actions.save!(post(base));
+		await saveTranscription(post(base));
 		expect((store.values.get('transcription') as Stored).whisperCpp.url).toBe('');
 		store.values.clear();
 		const whisper = base.map(([k, v]): [string, string] => [
 			k,
 			k === 'provider' ? 'whisper-cpp' : v
 		]);
-		const out = await actions.save!(post(whisper));
+		const out = await saveTranscription(post(whisper));
 		expect(out).toMatchObject({
 			status: 400,
 			data: { errors: { 'whisperCpp.url': 'Required.' } }
 		});
 		expect(store.values.has('transcription')).toBe(false);
-		await actions.save!(
+		await saveTranscription(
 			post([
 				...whisper.filter(([k]) => k !== 'whisperCpp.url'),
 				['whisperCpp.url', 'http://10.0.0.5:8080/']
@@ -112,18 +112,18 @@ describe('transcription save', () => {
 
 	it('saves a language typed into the box without Add', async () => {
 		// The box posts as one more `languages` value
-		await actions.save!(post([...base, ['languages', ' ES ']]));
+		await saveTranscription(post([...base, ['languages', ' ES ']]));
 		expect((store.values.get('transcription') as Stored).languages).toEqual(['sw', 'es']);
 	});
 
 	it('rejects a bad typed language and stores nothing', async () => {
-		const out = await actions.save!(post([...base, ['languages', 'xx1']]));
+		const out = await saveTranscription(post([...base, ['languages', 'xx1']]));
 		expect(out).toMatchObject({ status: 400, data: { errors: { languages: expect.any(String) } } });
 		expect(store.values.has('transcription')).toBe(false);
 	});
 
 	it('stores a key typed over an env-supplied one', async () => {
-		await actions.save!(post([...base, ['openai.apiKey', 'sk-ui']]));
+		await saveTranscription(post([...base, ['openai.apiKey', 'sk-ui']]));
 		expect((store.values.get('transcription') as Stored).openai.apiKey).toBe('sk-ui');
 	});
 });

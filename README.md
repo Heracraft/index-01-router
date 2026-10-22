@@ -33,8 +33,8 @@ URL. It signs you in through any OIDC provider.
    - `ALLOWED_EMAILS`: your email. The app refuses to start without it. `*` lets every account
      at the issuer in.
    - `TZ`: your zone, for example `Africa/Nairobi`. Daily note dates use it unless you pick
-     another zone on the Transcription page.
-   - `OPENAI_API_KEY`, or set the key later on the Transcription page.
+     another zone under Settings > General.
+   - `OPENAI_API_KEY`, or set the key later under Settings > Transcription.
    - `OBSIDIAN_MCP_URL`: the `/mcp/` endpoint of your Obsidian REST server, for example
      `https://vault.example.com/mcp/`, and `OBSIDIAN_API_KEY`: its bearer key. See
      [Obsidian](#obsidian).
@@ -119,7 +119,7 @@ server on. The app must reach that computer, for example over Tailscale, and not
 while Obsidian is open.
 
 Neither server reads Obsidian's daily note settings, so set the note path (default
-`{{date:YYYY-MM-DD}}.md`) and heading (`Notes`) in the integration to match your vault.
+`{{date:YYYY-MM-DD}}.md`) and heading (`Notes`) under Settings > Daily note to match your vault.
 
 ## Transcription
 
@@ -133,8 +133,8 @@ when you mix languages.
 | `whisper-cpp`  | `POST /inference`                         | none                       | A whisper.cpp server you host. Audio stays on your servers                                            |
 
 whisper.cpp is optional. Run its `whisper-server` (image `ghcr.io/ggml-org/whisper.cpp:main`)
-anywhere the app can reach, then enter its URL, for example `http://10.0.0.5:8080`, on the
-Transcription page. There is no default URL. Whisper models detect one language per 30 seconds,
+anywhere the app can reach, then enter its URL, for example `http://10.0.0.5:8080`, under
+Settings > Transcription (Model, Change). There is no default URL. Whisper models detect one language per 30 seconds,
 so on mixed-language audio they do worse than the hosted providers; the app cuts long recordings
 at pauses to limit that.
 

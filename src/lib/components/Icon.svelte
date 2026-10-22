@@ -11,7 +11,20 @@
 		| 'lock'
 		| 'chevron'
 		| 'close'
-		| 'arrow-left';
+		| 'arrow-left'
+		| 'left'
+		| 'right'
+		| 'play'
+		| 'pause'
+		| 'retry'
+		| 'gear'
+		| 'search'
+		| 'external'
+		| 'edit'
+		| 'share'
+		| 'check'
+		| 'plus'
+		| 'eye';
 </script>
 
 <script lang="ts">
@@ -19,16 +32,22 @@
 	interface Props {
 		name: IconName;
 		class?: string;
+		size?: number;
 	}
-	let { name, class: cls = '' }: Props = $props();
+	let { name, class: cls = '', size = 16 }: Props = $props();
+	const filled = $derived(name === 'play' || name === 'pause');
 </script>
 
 <svg
-	class="icon {cls}"
+	class="icon ic {cls}"
+	style:width="{size / 16}rem"
+	style:height="{size / 16}rem"
 	viewBox="0 0 16 16"
-	fill="none"
-	stroke="currentColor"
-	stroke-width={name === 'chevron' || name === 'close' ? 1.5 : 1.4}
+	fill={filled ? 'currentColor' : 'none'}
+	stroke={filled ? 'none' : 'currentColor'}
+	stroke-width={name === 'chevron' || name === 'close' || name === 'left' || name === 'right'
+		? 1.5
+		: 1.4}
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	aria-hidden="true"
@@ -80,13 +99,51 @@
 		<path d="M4 4l8 8M12 4l-8 8" />
 	{:else if name === 'arrow-left'}
 		<path d="M13 8H3M7 4L3 8l4 4" />
+	{:else if name === 'left'}
+		<path d="M10 3.5 5.5 8l4.5 4.5" />
+	{:else if name === 'right'}
+		<path d="m6 3.5 4.5 4.5L6 12.5" />
+	{:else if name === 'play'}
+		<path d="M4.5 2.6v10.8L13.3 8z" />
+	{:else if name === 'pause'}
+		<rect x="3.75" y="2.75" width="3" height="10.5" rx="0.75" /><rect
+			x="9.25"
+			y="2.75"
+			width="3"
+			height="10.5"
+			rx="0.75"
+		/>
+	{:else if name === 'retry'}
+		<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v3h3" />
+	{:else if name === 'gear'}
+		<path
+			d="M6.9 1.8h2.2l.35 1.7c.4.15.77.37 1.1.63l1.65-.55 1.1 1.9-1.3 1.15a4.6 4.6 0 0 1 0 1.27l1.3 1.15-1.1 1.9-1.65-.55c-.33.26-.7.48-1.1.63l-.35 1.7H6.9l-.35-1.7a4.4 4.4 0 0 1-1.1-.63l-1.65.55-1.1-1.9 1.3-1.15a4.6 4.6 0 0 1 0-1.27L2.7 5.5l1.1-1.9 1.65.55c.33-.26.7-.48 1.1-.63z"
+		/><circle cx="8" cy="8" r="1.9" />
+	{:else if name === 'search'}
+		<circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" />
+	{:else if name === 'external'}
+		<path
+			d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3"
+		/>
+	{:else if name === 'edit'}
+		<path d="M10.5 2.5l3 3L6 13H3v-3z" /><path d="M9 4l3 3" />
+	{:else if name === 'share'}
+		<path d="M8 2.5v8M5 5.5l3-3 3 3M3.5 8.5v4a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-4" />
+	{:else if name === 'check'}
+		<path d="M3.5 8.5l3 3 6-7" />
+	{:else if name === 'plus'}
+		<path d="M8 3v10M3 8h10" />
+	{:else if name === 'eye'}
+		<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" /><circle
+			cx="8"
+			cy="8"
+			r="2"
+		/>
 	{/if}
 </svg>
 
 <style>
 	.icon {
-		width: 1rem;
-		height: 1rem;
 		flex: none;
 	}
 </style>

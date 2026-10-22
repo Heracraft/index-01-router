@@ -1,0 +1,9 @@
+{
+	"name": "Index 01",
+	"short_name": "Index 01",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#fafafa",
+	"theme_color": "#fafafa",
+	"icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

@@ -1,63 +1,25 @@
-import { fail } from '@sveltejs/kit';
+// The Transcription section on /settings, with the timezone from General posted along.
+import { fail, type RequestEvent } from '@sveltejs/kit';
 import { TZ } from '$app/env/private';
 import {
-	envLocks,
 	getStored,
-	getStoredWithStatus,
-	keyReadiness,
 	setStored,
 	withEnvKeys,
 	type GeneralSettings,
 	type TranscribeProvider,
 	type TranscriptionSettings
 } from '#lib/server/settings.ts';
-import { CHUNK_SECONDS, PROVIDERS } from '#lib/server/transcribe/index.ts';
+import { PROVIDERS } from '#lib/server/transcribe/index.ts';
 import { probeTranscription } from '#lib/server/transcribe/probe.ts';
 import { isLanguageCode } from '#lib/format.ts';
-import type { Actions, PageServerLoad } from './$types';
 
-function timeZones() {
+export function timeZones() {
 	try {
 		return Intl.supportedValuesOf('timeZone');
 	} catch {
 		return ['UTC'];
 	}
 }
-
-export const load: PageServerLoad = async () => {
-	const [{ value: t, lost }, general] = await Promise.all([
-		getStoredWithStatus('transcription'),
-		getStored('general')
-	]);
-	const zones = timeZones();
-	return {
-		providers: PROVIDERS,
-		settings: {
-			provider: t.provider,
-			openai: { baseUrl: t.openai.baseUrl, model: t.openai.model },
-			openaiAudio: { baseUrl: t.openaiAudio.baseUrl, model: t.openaiAudio.model },
-			whisperCpp: { url: t.whisperCpp.url },
-			languages: t.languages,
-			prompt: t.prompt,
-			chunking: t.chunking
-		},
-		keysSet: {
-			openai: !!t.openai.apiKey,
-			openaiAudio: !!t.openaiAudio.apiKey
-		},
-		// Stored, but AUTH_SECRET no longer opens them
-		keysLost: {
-			openai: lost.includes('openai.apiKey'),
-			openaiAudio: lost.includes('openaiAudio.apiKey')
-		},
-		ready: keyReadiness(t, lost),
-		chunkSeconds: CHUNK_SECONDS,
-		envLocks,
-		generalTimezone: general.timezone,
-		envTimezone: TZ,
-		timeZones: zones.includes(general.timezone) ? zones : [general.timezone, ...zones]
-	};
-};
 
 const PROVIDER_IDS = PROVIDERS.map((p) => p.id) as string[];
 type Errors = Record<string, string>;
@@ -154,33 +116,32 @@ function fieldOf(provider: TranscribeProvider, message: string): string | null {
 	return null;
 }
 
-export const actions: Actions = {
-	save: async ({ request }) => {
-		const { settings, timezone, errors } = await readForm(request);
-		if (Object.keys(errors).length) return fail(400, { action: 'save', errors });
-		await setStored('transcription', settings);
-		if (timezone) {
-			// Store the zone only as an override, so a later change to TZ still applies
-			const general: Partial<GeneralSettings> = await getStored('general');
-			if (timezone === TZ) delete general.timezone;
-			else general.timezone = timezone;
-			await setStored('general', general);
-		}
-		return { action: 'save', saved: true };
-	},
-	test: async ({ request }) => {
-		const { settings, errors } = await readForm(request);
-		if (Object.keys(errors).length) return fail(400, { action: 'test', errors });
-		const signal = AbortSignal.timeout(60_000);
-		try {
-			const r = await probeTranscription(withEnvKeys(settings), { signal });
-			return { action: 'test', test: { ok: true as const, ...r } };
-		} catch (e) {
-			const message = e instanceof Error ? e.message : String(e);
-			return {
-				action: 'test',
-				test: { ok: false as const, message, field: fieldOf(settings.provider, message) }
-			};
-		}
+export async function saveTranscription({ request }: RequestEvent) {
+	const { settings, timezone, errors } = await readForm(request);
+	if (Object.keys(errors).length) return fail(400, { action: 'transcription', errors });
+	await setStored('transcription', settings);
+	if (timezone) {
+		// Store the zone only as an override, so a later change to TZ still applies
+		const general: Partial<GeneralSettings> = await getStored('general');
+		if (timezone === TZ) delete general.timezone;
+		else general.timezone = timezone;
+		await setStored('general', general);
 	}
-};
+	return { action: 'transcription', saved: true };
+}
+
+export async function testTranscription({ request }: RequestEvent) {
+	const { settings, errors } = await readForm(request);
+	if (Object.keys(errors).length) return fail(400, { action: 'transcriptionTest', errors });
+	const signal = AbortSignal.timeout(60_000);
+	try {
+		const r = await probeTranscription(withEnvKeys(settings), { signal });
+		return { action: 'transcriptionTest', test: { ok: true as const, ...r } };
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
+		return {
+			action: 'transcriptionTest',
+			test: { ok: false as const, message, field: fieldOf(settings.provider, message) }
+		};
+	}
+}

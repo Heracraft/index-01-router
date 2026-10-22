@@ -482,6 +482,27 @@ export async function appendToNote(
 	check(res, `Could not append to ${path}`);
 }
 
+/**
+ * The note at `path` as text, or null when there is none. For showing the note in the app; a
+ * delivery never reads through this
+ */
+export async function readNote(
+	raw: Record<string, unknown>,
+	path: string,
+	signal?: AbortSignal
+): Promise<string | null> {
+	const config = obsidianConfig(raw);
+	const session = await connect(config, signal);
+	try {
+		const r = await session.call('vault_read', { path });
+		if (isMissingFile(r)) return null;
+		check(r, `Could not read ${path}`);
+		return parseJson<{ content?: string }>(r, 'read').content ?? '';
+	} finally {
+		await session.close();
+	}
+}
+
 export const obsidian: IntegrationKind = {
 	kind: 'obsidian',
 	label: 'Obsidian',

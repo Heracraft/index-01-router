@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '../lib/styles/hk-tokens.css' layer(components);
+@import '../lib/styles/journal.css' layer(components);
 @plugin '@tailwindcss/typography';
 
 /* dark: matches an explicit Dark choice only. Components read --hk-* tokens, which also follow the OS */
